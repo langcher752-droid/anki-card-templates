@@ -121,10 +121,18 @@ def main() -> int:
         print(f"找不到牌组目录：{DECKS}")
         return 1
     OUT.mkdir(parents=True, exist_ok=True)
-    decks = sorted(DECKS.glob("*.apkg"))
+
+    # 只给**模板**出预览图：decks/ 里还可能有内容牌组（例如
+    # spaced-repetition-flashcards.apkg，它是给 /flashcards 页面配套的 12 张卡，
+    # 不是模板）。判据就一条——templates/<id>/ 是否存在。这样预览图与模板
+    # 严格 1:1，README 的表格也不会被内容牌组打乱。
+    decks = [d for d in sorted(DECKS.glob("*.apkg")) if (REPO / "templates" / d.stem).is_dir()]
+    skipped = [d.name for d in sorted(DECKS.glob("*.apkg")) if d not in decks]
     if not decks:
-        print("decks/ 下没有 .apkg")
+        print("decks/ 下没有可出预览图的模板牌组")
         return 1
+    if skipped:
+        print(f"跳过非模板牌组（不出预览图）：{', '.join(skipped)}")
 
     print(f"用 Anki 渲染 {len(decks)} 套模板…")
     rows = []

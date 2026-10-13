@@ -1,5 +1,6 @@
 {
   "generated_by": "scripts/build_share_decks.py",
+  "source_page": "https://www.lanche.website/flashcards",
   "templates": [
     {
       "id": "modern_qa",
@@ -183,6 +184,23 @@
       "cards": 6,
       "file": "decks/interactive_match.apkg",
       "bytes": 192730
+    },
+    {
+      "id": "spaced-repetition-flashcards",
+      "name": "Spaced Repetition Flashcards (content deck)",
+      "description": "12 English flashcards explaining spaced repetition; same content as the /flashcards page",
+      "license": "CC-BY-4.0 | LC Learning",
+      "fields": [
+        "Front",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "",
+      "cloze": false,
+      "cards": 12,
+      "file": "decks/spaced-repetition-flashcards.apkg",
+      "bytes": 57562,
+      "note": "内容牌组，不是模板；无对应的 previews/ 图"
     }
   ]
 }

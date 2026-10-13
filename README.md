@@ -29,6 +29,11 @@ Each image shows the real front and back of one card, rendered by **Anki's own r
 
 All eleven are licensed CC BY 4.0 — see [License & attribution](#license--attribution).
 
+One more file lives in [`decks/`](decks/): `spaced-repetition-flashcards.apkg` is a **content** deck
+(12 English cards explaining how spaced repetition works), not a template. It is the downloadable
+form of our [Spaced Repetition Flashcards](https://www.lanche.website/flashcards) page — the cards
+on that page and the cards in the file are generated from the same source, so they cannot drift apart.
+
 ---
 
 ## Quick start
