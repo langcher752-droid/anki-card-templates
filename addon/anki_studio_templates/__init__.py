@@ -31,9 +31,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from aqt import mw
+from aqt import gui_hooks, mw
 from aqt.qt import (
     QAction,
     QCheckBox,
@@ -47,11 +47,23 @@ from aqt.qt import (
 )
 from aqt.utils import show_info, show_warning, tooltip
 
-# 纯逻辑在 installer.py，不含 Qt。两种加载方式都兜住：
+try:  # QTimer 在 QtCore 里，aqt.qt 会把它一并导出；万一版本不同就直连 PyQt6
+    from aqt.qt import QTimer
+except ImportError:  # pragma: no cover
+    from PyQt6.QtCore import QTimer  # type: ignore
+
+# 纯逻辑在 installer.py / bridge.py，都不含 Qt。两种加载方式都兜住：
 # Anki 正常是按包导入（相对导入可用）；万一目录不是包，退回顶层导入。
 try:
+    from .bridge import (
+        ALLOWED_ORIGIN,
+        DEFAULT_PORT,
+        Bridge,
+        make_collection_executor,
+    )
     from .installer import install_templates, load_templates
 except ImportError:  # pragma: no cover
+    from bridge import ALLOWED_ORIGIN, DEFAULT_PORT, Bridge, make_collection_executor  # type: ignore
     from installer import install_templates, load_templates  # type: ignore
 
 SITE_TEMPLATES = "https://www.lanche.website/templates"
@@ -140,6 +152,142 @@ def on_open_site() -> None:
     openLink(SITE_TEMPLATES)
 
 
+# ==========================================================================
+# 本站 → Anki 的接收桥（「发送到 Anki」）
+#
+# 站点生成完卡片后，把 .apkg 直接发到本机，由这里导入——省掉「下载文件 →
+# 在 Anki 里找文件 → 导入」两步。实现与安全边界见 bridge.py。
+#
+# 🔴 线程模型：HTTP 服务在后台线程，但 Anki 的集合不是线程安全的。
+#    导入必须回到主线程，靠下面的 QTimer 周期调 bridge.pump() 完成。
+#    千万不要图省事在 handler 里直接 import_anki_package。
+# ==========================================================================
+
+_BRIDGE: Optional["Bridge"] = None
+_PUMP_TIMER = None
+
+
+def _cfg() -> dict:
+    cfg = mw.addonManager.getConfig(__name__) or {}
+    if not cfg.get("code"):
+        # 配对码：6 位数字。它唯一的用途是「让本机端口只接受你本人的浏览器投递」，
+        # 不是密码，所以不需要长、也不需要用户记。
+        import secrets
+
+        cfg["code"] = f"{secrets.randbelow(900000) + 100000}"
+        mw.addonManager.writeConfig(__name__, cfg)
+    return cfg
+
+
+def _save_cfg(cfg: dict) -> None:
+    mw.addonManager.writeConfig(__name__, cfg)
+
+
+def _get_bridge() -> Optional["Bridge"]:
+    return _BRIDGE
+
+
+def start_bridge(quiet: bool = False) -> bool:
+    global _BRIDGE, _PUMP_TIMER
+    if not mw or not mw.col:
+        if not quiet:
+            show_warning("请先打开一个用户配置（集合）。")
+        return False
+    cfg = _cfg()
+    if _BRIDGE is None:
+        _BRIDGE = Bridge(
+            code=str(cfg["code"]),
+            executor=make_collection_executor(lambda: mw.col if mw else None),
+            port=int(cfg.get("port") or DEFAULT_PORT),
+        )
+    ok, msg = _BRIDGE.start()
+    if not ok:
+        if not quiet:
+            show_warning(f"接收服务启动失败：{msg}")
+        return False
+    if _PUMP_TIMER is None:
+        _PUMP_TIMER = QTimer(mw)
+        _PUMP_TIMER.setInterval(300)
+        qconnect(_PUMP_TIMER.timeout, lambda: _BRIDGE and _BRIDGE.pump())
+        _PUMP_TIMER.start()
+    if not quiet:
+        tooltip(msg)
+    return True
+
+
+def stop_bridge(quiet: bool = False) -> None:
+    global _BRIDGE, _PUMP_TIMER
+    if _PUMP_TIMER is not None:
+        _PUMP_TIMER.stop()
+        _PUMP_TIMER = None
+    if _BRIDGE is not None:
+        _BRIDGE.stop()
+        if not quiet:
+            tooltip("接收服务已停止")
+    return None
+
+
+def on_toggle_bridge() -> None:
+    b = _get_bridge()
+    if b is not None and b.running:
+        stop_bridge()
+    else:
+        start_bridge()
+
+
+def on_show_pairing() -> None:
+    cfg = _cfg()
+    b = _get_bridge()
+    running = bool(b and b.running)
+    # 端口以「实际绑定到的」为准：基端口被占时会自动往上让。
+    port = b.port if running else int(cfg.get("port") or DEFAULT_PORT)
+    lines = [
+        f"配对码：{cfg['code']}",
+        "",
+        "用法：",
+        "1. 在浏览器里登录主站并生成卡片（" + SITE_HOME + "AI-Anki）",
+        "2. 点结果区上方的「发送到 Anki」",
+        "3. 第一次会让你输入上面这个配对码；之后记住，不用再输",
+        "",
+        f"接收状态：{'运行中（127.0.0.1:' + str(port) + '）' if running else '未启动'}",
+    ]
+    if not running:
+        lines += ["", "接收服务当前没在跑：工具 → Anki 小工坊 → 启动接收服务"]
+        if b is not None and b.last_error:
+            lines.append(f"上次失败原因：{b.last_error}")
+    show_info("\n".join(lines))
+
+
+def on_bridge_status() -> None:
+    b = _get_bridge()
+    if b is None or not b.running:
+        detail = f"\n\n上次失败原因：{b.last_error}" if b is not None and b.last_error else ""
+        show_info("接收服务未启动。\n\n点「启动接收服务」后，站上的「发送到 Anki」才可用。" + detail)
+        return
+    s = b.stats
+    show_info(
+        f"接收服务运行中：127.0.0.1:{b.port}\n"
+        f"已导入 {s['imported']} 次，失败 {s['failed']} 次，拒绝 {s['rejected']} 次。\n\n"
+        f"配对码：{_cfg()['code']}"
+    )
+
+
+def _on_profile_did_open() -> None:
+    cfg = _cfg()
+    if not cfg.get("auto_start", True):
+        return
+    ok = start_bridge(quiet=True)
+    if not ok and _BRIDGE is not None and _BRIDGE.last_error:
+        # 🔴 自动启动失败**不能静默**：用户只会发现「发送到 Anki 点了没反应」，
+        #    然后来问为什么。所以这里明确说一句，并指向状态菜单。
+        tooltip(f"「发送到 Anki」不可用：{_BRIDGE.last_error}\n"
+                f"（工具 → Anki 小工坊 → 接收服务状态）", period=8000)
+
+
+def _on_profile_will_close() -> None:
+    stop_bridge(quiet=True)
+
+
 def setup_menu() -> None:
     if mw is None:
         return
@@ -149,6 +297,7 @@ def setup_menu() -> None:
         parent_menu = mw.form.menubar
 
     menu = parent_menu.addMenu("Anki 小工坊")
+
     act_install = QAction("安装卡片模板…", mw)
     qconnect(act_install.triggered, on_install)
     menu.addAction(act_install)
@@ -157,5 +306,24 @@ def setup_menu() -> None:
     qconnect(act_site.triggered, on_open_site)
     menu.addAction(act_site)
 
+    menu.addSeparator()
+
+    act_toggle = QAction("启动 / 停止接收服务（本站 → Anki）", mw)
+    qconnect(act_toggle.triggered, on_toggle_bridge)
+    menu.addAction(act_toggle)
+
+    act_pair = QAction("显示配对码…", mw)
+    qconnect(act_pair.triggered, on_show_pairing)
+    menu.addAction(act_pair)
+
+    act_status = QAction("接收服务状态…", mw)
+    qconnect(act_status.triggered, on_bridge_status)
+    menu.addAction(act_status)
+
 
 setup_menu()
+
+# 集合打开/关闭时才碰集合：启动接收服务、并把定时泵挂上。
+# profile_did_open 也是唯一能安全访问 mw.col 的时机。
+gui_hooks.profile_did_open.append(_on_profile_did_open)
+gui_hooks.profile_will_close.append(_on_profile_will_close)

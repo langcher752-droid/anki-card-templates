@@ -57,9 +57,18 @@ Each deck ships with sample cards, so you can see what the template looks like i
 
 ### Option 3 — One-click installer add-on
 
-See [`addon/`](addon/). It installs all eleven templates at once and **never overwrites** an
-existing note type: if a note type with the same name already exists, it is skipped.
-It works offline, needs no account, and reports nothing anywhere.
+See [`addon/`](addon/) (add-on code **905039649**). It installs all eleven templates at once and
+**never overwrites** an existing note type: if a note type with the same name already exists, it
+is skipped.
+
+Since v1.1.0 it also does the reverse direction: generate cards on
+[Anki 小工坊](https://www.lanche.website/AI-Anki) and press **"Send to Anki"** — the cards land
+directly in your collection, with no `.apkg` download and no manual import.
+
+**Network behaviour, stated precisely:** the template installer never touches the network. The
+"send to Anki" feature opens a port on `127.0.0.1` only, the add-on never makes any outbound
+request, and nothing is reported anywhere. Data flows in exactly one direction: your browser →
+your own machine. It can be switched off from the add-on's menu.
 
 ---
 
@@ -136,7 +145,9 @@ PW_PYTHON=... python3 tools/html_to_png.py    # see the file header for env vars
 
 - 想直接用：从 [`decks/`](decks/) 下载 `.apkg`，双击导入 Anki 即可
 - 想改样式：[`templates/<id>/`](templates/) 里有正/背面模板与 CSS 源码
-- 想一次装完：[`addon/`](addon/) 是配套插件（只新增、不覆盖，不联网、不需要账号）
+- 想一次装完：[`addon/`](addon/) 是配套插件，编号 **905039649**。只新增不覆盖；
+  模板安装不联网。v1.1.0 起还能反向：在网站点「发送到 Anki」直接进集合，不用下载再导入
+  （该功能只在本机 127.0.0.1 开一个端口，插件不向外发任何请求，可在菜单里关掉）
 
 上面的预览图是用 **Anki 自己的渲染器**跑出来的真实卡片效果，不是示意图。
 
