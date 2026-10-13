@@ -104,6 +104,62 @@ class FakeForm:
         self.menubar = FakeMenuBar()
 
 
+class FakeDockWidget:
+    """只记下被调用过什么，够验证「面板被挂到主窗口」这件事。"""
+
+    def __init__(self, title="", parent=None):
+        self.title = title
+        self.parent = parent
+        self.object_name = ""
+        self.areas = None
+        self.widget = None
+        self._visible = False
+
+    def setObjectName(self, name):
+        self.object_name = name
+
+    def setAllowedAreas(self, areas):
+        self.areas = areas
+
+    def setWidget(self, w):
+        self.widget = w
+
+    def show(self):
+        self._visible = True
+
+    def hide(self):
+        self._visible = False
+
+    def isVisible(self):
+        return self._visible
+
+
+class FakeWebView:
+    """面板用的 webview 桩：记下注入的 HTML 和 eval 出去的脚本。"""
+
+    def __init__(self, parent=None, title=""):
+        self.parent = parent
+        self.title = title
+        self.bridge = None
+        self.html = ""
+        self.evals = []
+
+    def set_bridge_command(self, func, context=None):
+        self.bridge = func
+
+    def stdHtml(self, body, css=None, js=None, head=None, context=None, default_css=True):
+        self.html = body
+
+    def eval(self, script):
+        self.evals.append(script)
+
+    def send(self, payload):
+        """模拟页面发命令给 Python。"""
+        import json as _json
+        if self.bridge:
+            self.bridge(_json.dumps(payload) if not isinstance(payload, str) else payload)
+
+
 class FakeTimer:
     def __init__(self, parent=None):
         self.timeout = FakeSignal()
@@ -137,6 +193,10 @@ class FakeMW:
         self.form = FakeForm()
         self.addonManager = FakeAddonManager()
         self.col = col
+        self.docks = []          # addDockWidget 的记录
+
+    def addDockWidget(self, area, dock):
+        self.docks.append((area, dock))
 
 
 def install_fake_aqt(mw_obj):
@@ -152,7 +212,17 @@ def install_fake_aqt(mw_obj):
                  "QScrollArea", "QVBoxLayout", "QWidget", "QTimer"):
         setattr(qt, name, FakeAction if name == "QAction" else FakeTimer if name == "QTimer"
                 else type(name, (), {}))
+    qt.QDockWidget = FakeDockWidget
     qt.qconnect = lambda sig, slot: sig.connect(slot)
+
+    class _DockAreas:
+        LeftDockWidgetArea = 1
+        RightDockWidgetArea = 2
+
+    qt.Qt = types.SimpleNamespace(DockWidgetArea=_DockAreas())
+
+    webview = types.ModuleType("aqt.webview")
+    webview.AnkiWebView = FakeWebView
 
     utils = types.ModuleType("aqt.utils")
     utils.calls = []
@@ -161,7 +231,8 @@ def install_fake_aqt(mw_obj):
     utils.tooltip = lambda m, **k: utils.calls.append(("tip", m))
     utils.openLink = lambda u: utils.calls.append(("open", u))
 
-    sys.modules.update({"aqt": aqt, "aqt.gui_hooks": hooks, "aqt.qt": qt, "aqt.utils": utils})
+    sys.modules.update({"aqt": aqt, "aqt.gui_hooks": hooks, "aqt.qt": qt,
+                        "aqt.utils": utils, "aqt.webview": webview})
     return hooks, utils
 
 
@@ -250,6 +321,44 @@ def main() -> int:
 
         hooks.profile_will_close[0]()
         check("关闭配置钩子可执行", True)
+
+        print("== 6. 生成面板（挂主窗口侧栏）==")
+        check("菜单里有生成面板入口", any("生成面板" in x for x in labels), str(labels))
+        addon.on_toggle_panel()
+        check("面板已挂到主窗口（addDockWidget 被调用）", len(mw_obj.docks) == 1,
+              f"docks={len(mw_obj.docks)}")
+        if mw_obj.docks:
+            area, dock = mw_obj.docks[0]
+            check("挂在右侧", area == 2, f"area={area}")
+            check("dock 有唯一对象名（Anki 用它记住布局）", dock.object_name == "anki_studio_panel")
+            check("面板已显示", dock.isVisible())
+            web = dock.widget
+            check("面板内容用的是 AnkiWebView", isinstance(web, FakeWebView), type(web).__name__)
+            if isinstance(web, FakeWebView):
+                check("注入的是本地面板 HTML（断网也能显示）",
+                      "btn-generate" in web.html and "login" in web.html)
+                web.evals.clear()
+                web.send({"cmd": "hello"})
+                check("hello → 推送登录态", any("setUser" in e for e in web.evals),
+                      str(web.evals)[:160])
+                check("hello → 推送模板列表", any("setTemplates" in e for e in web.evals))
+                # 未登录时点生成：必须当场拒掉，不该发起任何网络请求
+                web.evals.clear()
+                web.send({"cmd": "generate", "text": "材料", "template": "modern_qa"})
+                check("未登录点生成 → 提示先登录（不发请求）",
+                      any("请先登录" in e for e in web.evals), str(web.evals)[:200])
+                # 登录态下再点生成：这次该轮到「材料为空」的检查
+                mw_obj.addonManager.store["anki_studio_templates"]["token"] = "tk_test"
+                web.evals.clear()
+                web.send({"cmd": "generate", "text": "", "template": "modern_qa"})
+                check("已登录但材料为空 → 提示先粘贴（不发请求）",
+                      any("材料" in e for e in web.evals), str(web.evals)[:200])
+                mw_obj.addonManager.store["anki_studio_templates"].pop("token", None)
+        addon.on_toggle_panel()
+        check("再点一次收起面板", not mw_obj.docks[0][1].isVisible() if mw_obj.docks else False)
+
+        print("== 7. 面板的泵在异常时不能崩 ==")
+        check("泵可调用（主线程定时调用）", callable(getattr(addon._PANEL, "pump", None)))
     finally:
         col.close()
         try:

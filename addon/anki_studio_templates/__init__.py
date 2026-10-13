@@ -62,9 +62,11 @@ try:
         make_collection_executor,
     )
     from .installer import install_templates, load_templates
+    from .panel import Panel
 except ImportError:  # pragma: no cover
     from bridge import ALLOWED_ORIGIN, DEFAULT_PORT, Bridge, make_collection_executor  # type: ignore
     from installer import install_templates, load_templates  # type: ignore
+    from panel import Panel  # type: ignore
 
 SITE_TEMPLATES = "https://www.lanche.website/templates"
 SITE_HOME = "https://www.lanche.website/"
@@ -288,6 +290,54 @@ def _on_profile_will_close() -> None:
     stop_bridge(quiet=True)
 
 
+# ==========================================================================
+# 生成面板：在 Anki 主窗口右侧制卡（不用去网站）
+#
+# 界面是插件自带的本地 HTML，断网也能正常显示；只有登录与生成需要联网。
+# 线程模型与 bridge.py 同一条铁律：网络在后台，写集合回主线程。
+# ==========================================================================
+
+_PANEL: Optional["Panel"] = None
+
+
+def _import_apkg_for_panel(path: str) -> int:
+    """把 .apkg 导进当前集合，返回新增的卡片数。**只能在主线程调用。**"""
+    from anki.import_export_pb2 import ImportAnkiPackageOptions, ImportAnkiPackageRequest
+
+    col = mw.col if mw else None
+    if col is None:
+        raise RuntimeError("当前没有打开的集合")
+    before = col.db.scalar("select count() from notes") or 0
+    col.import_anki_package(ImportAnkiPackageRequest(
+        package_path=path,
+        options=ImportAnkiPackageOptions(with_scheduling=True, with_deck_configs=True),
+    ))
+    after = col.db.scalar("select count() from notes") or 0
+    return int(after) - int(before)
+
+
+def _get_panel() -> Optional["Panel"]:
+    global _PANEL
+    if not mw or not mw.col:
+        return None
+    if _PANEL is None:
+        _PANEL = Panel(
+            get_config=_cfg,
+            save_config=_save_cfg,
+            load_templates=lambda: load_templates(),
+            import_apkg=_import_apkg_for_panel,
+        )
+    return _PANEL
+
+
+def on_toggle_panel() -> None:
+    panel = _get_panel()
+    if panel is None:
+        show_warning("请先打开一个用户配置（集合），再用生成面板。")
+        return
+    panel.toggle()
+
+
 def setup_menu() -> None:
     if mw is None:
         return
@@ -297,6 +347,13 @@ def setup_menu() -> None:
         parent_menu = mw.form.menubar
 
     menu = parent_menu.addMenu("Anki 小工坊")
+
+    # 生成面板放最前：这是日常最常用的入口（在 Anki 里直接制卡）。
+    act_panel = QAction("生成面板（在这里制卡）", mw)
+    qconnect(act_panel.triggered, on_toggle_panel)
+    menu.addAction(act_panel)
+
+    menu.addSeparator()
 
     act_install = QAction("安装卡片模板…", mw)
     qconnect(act_install.triggered, on_install)

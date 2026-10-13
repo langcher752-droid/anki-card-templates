@@ -1,0 +1,203 @@
+<!--
+  生成面板（嵌在 Anki 里）。
+
+  设计取向：**这是 Anki 的一部分，不是网站的移植**。
+    · 颜色、字体全部走 Anki 自己的 CSS 变量，跟随 Anki 主题（浅色/深色都不用我管）
+    · 不做卡片、不做阴影、不做渐变——那些是网站的视觉语言，搬进来只会显得格格不入
+    · 只有「输入 → 生成 → 结果」三段，没有导航、没有营销位、没有说明长文
+
+  离线可用：这个文件、样式、脚本都是插件自带的本地文件，断网也能正常显示。
+  只有「登录」和「生成」需要联网——那两步本来就依赖主站。
+-->
+<div id="root">
+
+  <!-- 未登录 -->
+  <div id="auth-view">
+    <p class="lede">用主站账号登录后即可在这里生成卡片。</p>
+    <label>邮箱
+      <input id="email" type="email" autocomplete="username" placeholder="you@example.com">
+    </label>
+    <label>密码
+      <input id="password" type="password" autocomplete="current-password" placeholder="主站登录密码">
+    </label>
+    <button id="btn-login">登录</button>
+    <p class="note">
+      没有账号或忘记密码：到网站注册/重置一次即可。
+      密码只用于换取凭证，**不会**被保存在插件里。
+    </p>
+  </div>
+
+  <!-- 已登录 -->
+  <div id="work-view" hidden>
+    <div class="who">
+      <span id="who-email"></span>
+      <span id="who-quota" class="muted"></span>
+      <a href="#" id="btn-logout" class="muted">退出</a>
+    </div>
+
+    <label>材料
+      <textarea id="text" rows="9" placeholder="把讲义、词表或真题解析粘贴进来。段落完整即可，不用排版。"></textarea>
+    </label>
+
+    <div class="row">
+      <label>模板
+        <select id="template"></select>
+      </label>
+      <label>张数
+        <select id="count-mode">
+          <option value="less">少一些（约六成）</option>
+          <option value="ai" selected>交给它决定</option>
+          <option value="more">多一些（约一倍半）</option>
+        </select>
+      </label>
+      <label>细节
+        <select id="detail-mode">
+          <option value="brief" selected>简洁</option>
+          <option value="detailed">详细（含同义与例句）</option>
+        </select>
+      </label>
+    </div>
+
+    <button id="btn-generate">生成并导入到 Anki</button>
+    <p id="status" class="status" hidden></p>
+    <p class="note">
+      卡片在主站生成（消耗你账号的算力），生成后直接写入当前集合，不需要下载文件。
+    </p>
+  </div>
+
+</div>
+
+<style>
+  #root { max-width: 100%; font-size: 13px; }
+  label { display: block; margin: 0 0 10px; font-size: 12.5px; opacity: .82; }
+  input, textarea, select {
+    display: block; width: 100%; margin-top: 4px; box-sizing: border-box;
+    padding: 6px 8px; font-size: 13px; font-family: inherit;
+    color: var(--fg, inherit); background: var(--canvas, transparent);
+    border: 1px solid var(--border, #d0d0d0); border-radius: 5px;
+  }
+  textarea { resize: vertical; line-height: 1.6; }
+  button {
+    padding: 7px 14px; font-size: 13px; font-family: inherit;
+    border: 1px solid var(--border, #d0d0d0); border-radius: 5px;
+    background: var(--button-bg, transparent); color: var(--fg, inherit); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--fg, #888); }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 8px; }
+  .row label { flex: 1; min-width: 0; }
+  .lede { margin: 0 0 12px; opacity: .82; }
+  .muted { opacity: .6; }
+  .note { margin: 10px 0 0; font-size: 11.5px; line-height: 1.7; opacity: .6; }
+  .who {
+    display: flex; align-items: baseline; gap: 10px;
+    padding-bottom: 8px; margin-bottom: 10px;
+    border-bottom: 1px solid var(--border, #e0e0e0); font-size: 12px;
+  }
+  .who #who-email { font-weight: 600; }
+  .who #btn-logout { margin-left: auto; text-decoration: none; }
+  .status { margin: 10px 0 0; font-size: 12.5px; line-height: 1.7; }
+  .status.err { color: #c0392b; }
+  .status.ok { color: #1e8449; }
+</style>
+
+<script>
+// 与 Python 的通道：pycmd 是 Anki 注入到页面的桥，Python 侧用
+// set_bridge_command 收。统一传 JSON 字符串，避免自己拼分隔符。
+function call(payload) {
+  pycmd(JSON.stringify(payload));
+}
+
+function setStatus(text, kind) {
+  var el = document.getElementById("status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = "status" + (kind ? " " + kind : "");
+  el.hidden = !text;
+}
+
+function setBusy(busy, label) {
+  var gen = document.getElementById("btn-generate");
+  var login = document.getElementById("btn-login");
+  if (gen) { gen.disabled = busy; gen.textContent = busy ? (label || "处理中…") : "生成并导入到 Anki"; }
+  if (login) { login.disabled = busy; }
+}
+
+// Python 通过 webview.eval 调用这些函数把结果推回页面。
+window.__panel = {
+  // 渲染登录态
+  setUser: function (data) {
+    var authed = !!(data && data.email);
+    document.getElementById("auth-view").hidden = authed;
+    document.getElementById("work-view").hidden = !authed;
+    if (authed) {
+      document.getElementById("who-email").textContent = data.email;
+      var q = data.quota;
+      document.getElementById("who-quota").textContent =
+        (q === null || q === undefined) ? "" : ("剩余算力 " + q);
+    }
+  },
+  setTemplates: function (list) {
+    var sel = document.getElementById("template");
+    if (!sel) return;
+    sel.innerHTML = "";
+    (list || []).forEach(function (t) {
+      var o = document.createElement("option");
+      o.value = t.id;
+      o.textContent = t.name;
+      sel.appendChild(o);
+    });
+  },
+  status: function (text, kind) { setStatus(text, kind); },
+  busy: function (on, label) { setBusy(!!on, label); },
+  // 登录结果：Python 已经判断过成败，这里只管展示
+  afterLogin: function (res) {
+    setBusy(false);
+    if (res && res.ok) {
+      setStatus("", "");
+      document.getElementById("password").value = "";   // 密码不留在页面里
+    } else {
+      setStatus((res && res.message) || "登录失败", "err");
+    }
+  },
+  afterGenerate: function (res) {
+    setBusy(false);
+    if (res && res.ok) {
+      setStatus((res.message || "已导入") + "。切到 Anki 就能看到。", "ok");
+    } else {
+      setStatus((res && res.message) || "生成失败", "err");
+    }
+  }
+};
+
+document.getElementById("btn-login").addEventListener("click", function () {
+  var email = document.getElementById("email").value.trim();
+  var password = document.getElementById("password").value;
+  if (!email || !password) { setStatus("邮箱和密码都要填。", "err"); return; }
+  setBusy(true, "登录中…");
+  setStatus("正在登录…", "");
+  call({ cmd: "login", email: email, password: password });
+});
+
+document.getElementById("btn-generate").addEventListener("click", function () {
+  var text = document.getElementById("text").value.trim();
+  if (!text) { setStatus("先粘贴一些材料。", "err"); return; }
+  setBusy(true, "生成中…");
+  setStatus("正在生成…材料长的话会慢一些，别关窗口。", "");
+  call({
+    cmd: "generate",
+    text: text,
+    template: document.getElementById("template").value,
+    count_mode: document.getElementById("count-mode").value,
+    detail_mode: document.getElementById("detail-mode").value
+  });
+});
+
+document.getElementById("btn-logout").addEventListener("click", function (e) {
+  e.preventDefault();
+  call({ cmd: "logout" });
+});
+
+// 页面就绪后问一次状态：面板可能是登录状态下打开的
+call({ cmd: "hello" });
+</script>

@@ -1,11 +1,13 @@
 # Anki 小工坊 · 模板一键安装（Anki 插件）
 
-插件编号 **905039649**。两个功能：
+插件编号 **905039649**。三个功能：
 
-1. 把本仓库的 11 套模板一次性装进你的 Anki 集合
-2. 在网站生成完卡片后，**直接发送到 Anki**，不用下载再导入
+1. **生成面板**：在 Anki 主窗口右侧直接粘贴材料制卡，不用去网站
+2. 把本仓库的 11 套模板一次性装进你的 Anki 集合
+3. 在网站生成完卡片后，**直接发送到 Anki**，不用下载再导入
 
 ```
+工具 → Anki 小工坊 → 生成面板（在这里制卡）       主窗口右侧的侧栏，最常用
 工具 → Anki 小工坊 → 安装卡片模板…              勾选要装的模板
 工具 → Anki 小工坊 → 启动 / 停止接收服务          站上「发送到 Anki」的开关
 工具 → Anki 小工坊 → 显示配对码…                站上第一次发送时要填的 6 位数字
@@ -13,7 +15,24 @@
 工具 → Anki 小工坊 → 打开模板展厅               到浏览器里看每套模板的真实效果
 ```
 
-## 功能一：模板一键安装
+## 功能一：生成面板（v1.2.0 新增，日常主力）
+
+`工具 → Anki 小工坊 → 生成面板`，主窗口右侧出现一个侧栏：粘贴材料 → 选模板 →
+「生成并导入到 Anki」，卡片直接落进当前集合。**不用打开网站、不用下载文件、不用导入。**
+
+- **界面是插件自带的本地 HTML**，所以**断网也能正常显示**；只有「登录」和「生成」需要联网
+- 界面刻意做得克制：不套网站的视觉（卡片、阴影、渐变都没有），配色字体跟随 Anki 主题，
+  看起来就是 Anki 的一部分
+- 用主站账号登录一次（邮箱 + 密码）。**密码只用于换取凭证，不会保存在插件里**；
+  凭证有效期 30 天，过期后重新登录即可
+- 生成在主站上跑（消耗你账号的算力）：模型、提示词、质检、模板都在站上，
+  插件里重做一遍必然与站上不一致，所以插件只负责「提交材料」和「收下卡片」
+
+🔴 **为什么挂在主窗口**：`mw`（AnkiQt）的基类就是 `QMainWindow`，所以 `addDockWidget` 直接可用。
+（Anki 自己只在「浏览」窗口用了 dock，一开始我据此误判过「主窗口没有停靠 API」——
+那是从字面量找不到 `addDockWidget` 得出的错误结论。）
+
+## 功能二：模板一键安装
 
 一次装完 11 套模板，省掉「新建笔记类型 → 逐个加字段 → 粘贴正反面模板 → 粘贴 CSS」。
 
@@ -21,7 +40,7 @@
 改错别人的笔记类型是这类「一键安装」插件最容易造成的破坏。装完就是普通笔记类型，
 卸载插件后模板照常存在。
 
-## 功能二：从本站直接发送到 Anki（v1.1.0 新增）
+## 功能三：从本站（网页）直接发送到 Anki（v1.1.0 新增）
 
 在网站生成完卡片后点「发送到 Anki」，卡片**直接进你的集合**——不再走
 「导出 .apkg → 在系统里找文件 → 在 Anki 里导入」这三步。
@@ -64,10 +83,11 @@ Anki →「工具 → 插件 → 获取插件」→ 输入 **905039649**。
 #    在模板源项目里执行：
 python3 scripts/build_addon_templates.py
 
-# 2. 三套测试，都在**临时收藏夹**里跑，不碰你的真实收藏夹
-python3 addon/test_installer.py     # 模板安装：19 项断言
-python3 addon/test_bridge.py        # 发送桥：19 项断言（含三道安全校验）
-python3 addon/test_addon_glue.py    # Qt 胶水层：19 项断言（用假 aqt 加载整个插件）
+# 2. 四套测试，都不联网、不花算力、不碰你的真实收藏夹
+python3 addon/test_api.py           # 与主站通信：28 项（注入假 transport，不打真接口）
+python3 addon/test_installer.py     # 模板安装：95 项
+python3 addon/test_bridge.py        # 发送桥：19 项（含三道安全校验）
+python3 addon/test_addon_glue.py    # Qt 胶水层：32 项（用假 aqt 加载整个插件）
 
 # 3. 打包成 AnkiWeb 可上传的 zip
 python3 addon/build_addon.py
@@ -80,6 +100,9 @@ python3 addon/build_addon.py
 | `anki_studio_templates/__init__.py` | 菜单、弹窗、定时泵（Qt 部分） |
 | `anki_studio_templates/installer.py` | 写笔记类型的纯逻辑，不依赖 Qt，可单独测 |
 | `anki_studio_templates/bridge.py` | 发送桥的本机服务，不依赖 Qt，可单独测 |
+| `anki_studio_templates/api.py` | 与主站通信（登录/生成/打包），不依赖 Qt，可单独测 |
+| `anki_studio_templates/panel.py` | 生成面板（dock + webview + 主线程泵） |
+| `anki_studio_templates/panel.html` | 面板界面（本地 HTML，断网也能显示） |
 | `anki_studio_templates/templates.json` | 模板数据（**生成物**，不要手改） |
 | `anki_studio_templates/config.json` | 默认配置（配对码、端口、是否自动启动） |
 | `anki_studio_templates/manifest.json` | 插件清单，`package` = 905039649 |

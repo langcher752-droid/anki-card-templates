@@ -26,8 +26,8 @@ DIST = HERE.parent / "dist"
 # 只打插件运行必需的文件。测试脚本、构建脚本都不进包。
 # 🔴 bridge.py 与 config.json 必须在清单里：漏了 bridge.py，插件会在 import 时直接崩；
 #    漏了 config.json，配对码与端口就没有默认值（_cfg() 仍能兜住，但配置界面上是空的）。
-INCLUDE = ("__init__.py", "installer.py", "bridge.py", "manifest.json",
-           "templates.json", "config.json")
+INCLUDE = ("__init__.py", "installer.py", "bridge.py", "panel.py", "api.py",
+           "panel.html", "manifest.json", "templates.json", "config.json")
 
 
 def main() -> int:
