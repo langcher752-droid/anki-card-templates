@@ -1,0 +1,188 @@
+{
+  "generated_by": "scripts/build_share_decks.py",
+  "templates": [
+    {
+      "id": "modern_qa",
+      "name": "现代简约 Modern QA",
+      "description": "一问一答，正文层级清晰，通用性最好。",
+      "license": "CC-BY-4.0 | LC Learning",
+      "fields": [
+        "Front",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "",
+      "cloze": false,
+      "cards": 8,
+      "file": "decks/modern_qa.apkg",
+      "bytes": 61658
+    },
+    {
+      "id": "elegant_vocab",
+      "name": "学术雅致 Elegant Vocab",
+      "description": "带音标、词性、词根与例句的词汇卡。",
+      "license": "CC-BY-4.0 | LC Learning",
+      "fields": [
+        "Front",
+        "Phonetic",
+        "Pos",
+        "Back",
+        "Root",
+        "Example",
+        "Dict"
+      ],
+      "interactive": "",
+      "cloze": false,
+      "cards": 8,
+      "file": "decks/elegant_vocab.apkg",
+      "bytes": 61658
+    },
+    {
+      "id": "cloze_highlight",
+      "name": "荧光高亮 Cloze Highlight",
+      "description": "挖空后以荧光色标出，适合背句子与法条。",
+      "license": "CC-BY-4.0 | LC Learning",
+      "fields": [
+        "Text",
+        "Back Extra",
+        "Dict"
+      ],
+      "interactive": "",
+      "cloze": true,
+      "cards": 6,
+      "file": "decks/cloze_highlight.apkg",
+      "bytes": 61658
+    },
+    {
+      "id": "code_craft",
+      "name": "极简代码 Code Craft",
+      "description": "等宽字体与代码块样式，适合编程类记忆。",
+      "license": "MIT | LC Learning",
+      "fields": [
+        "Front",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "",
+      "cloze": false,
+      "cards": 6,
+      "file": "decks/code_craft.apkg",
+      "bytes": 61658
+    },
+    {
+      "id": "med_foldout",
+      "name": "医考折叠 Med Foldout",
+      "description": "答案分层折叠，先看大类再展开细节。",
+      "license": "CC-BY-4.0 | LC Learning",
+      "fields": [
+        "Front",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "",
+      "cloze": false,
+      "cards": 6,
+      "file": "decks/med_foldout.apkg",
+      "bytes": 61658
+    },
+    {
+      "id": "cornell_divided",
+      "name": "康奈尔双栏 Cornell Divided",
+      "description": "左线索右笔记的双栏结构。",
+      "license": "MIT | LC Learning",
+      "fields": [
+        "Front",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "",
+      "cloze": false,
+      "cards": 6,
+      "file": "decks/cornell_divided.apkg",
+      "bytes": 61658
+    },
+    {
+      "id": "marker_highlight",
+      "name": "纸质荧光 Marker Highlight",
+      "description": "模拟纸质荧光笔的重点标注观感。",
+      "license": "MIT | LC Learning",
+      "fields": [
+        "Front",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "",
+      "cloze": false,
+      "cards": 6,
+      "file": "decks/marker_highlight.apkg",
+      "bytes": 61658
+    },
+    {
+      "id": "interactive_choice",
+      "name": "互动 · 选择题 Choice",
+      "description": "在卡片里直接作答并即时判分。",
+      "license": "CC-BY-4.0 | LC Learning",
+      "fields": [
+        "Front",
+        "Options",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "choice",
+      "cloze": false,
+      "cards": 6,
+      "file": "decks/interactive_choice.apkg",
+      "bytes": 192730
+    },
+    {
+      "id": "interactive_typein",
+      "name": "互动 · 填空题 Type-in",
+      "description": "打字输入答案，自动比对。",
+      "license": "CC-BY-4.0 | LC Learning",
+      "fields": [
+        "Front",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "typein",
+      "cloze": false,
+      "cards": 6,
+      "file": "decks/interactive_typein.apkg",
+      "bytes": 192730
+    },
+    {
+      "id": "interactive_order",
+      "name": "互动 · 排序题 Order",
+      "description": "拖拽排出正确顺序。",
+      "license": "CC-BY-4.0 | LC Learning",
+      "fields": [
+        "Front",
+        "Items",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "order",
+      "cloze": false,
+      "cards": 6,
+      "file": "decks/interactive_order.apkg",
+      "bytes": 192730
+    },
+    {
+      "id": "interactive_match",
+      "name": "互动 · 配对题 Match",
+      "description": "左右两列配对。",
+      "license": "CC-BY-4.0 | LC Learning",
+      "fields": [
+        "Front",
+        "Pairs",
+        "Back",
+        "Dict"
+      ],
+      "interactive": "match",
+      "cloze": false,
+      "cards": 6,
+      "file": "decks/interactive_match.apkg",
+      "bytes": 192730
+    }
+  ]
+}

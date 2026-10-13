@@ -1,0 +1,1724 @@
+<div class="card">
+  <div class="ix-root ix-order" data-ix="order" data-ix-mode="ask">
+    <div class="ix-kicker">ORDER · 排序题</div>
+    <div class="ix-q">{{Front}}</div>
+    <div class="ix-src">{{Items}}</div>
+    <div class="ix-bar">
+      <button type="button" class="ix-btn ix-btn--primary" data-ix-act="check">检查答案</button>
+      <button type="button" class="ix-btn" data-ix-act="reset">重做</button>
+    </div>
+    <div class="ix-verdict" role="status" hidden></div>
+    <div class="ix-hint"></div>
+  </div>
+  <div class="license-foot">Design: CC-BY-4.0 | LC Learning</div>
+</div>
+<script>
+/* ==========================================================================
+   交互题型运行时（ix = interactive）
+   --------------------------------------------------------------------------
+   四种题型：选择题 / 打字填空 / 排序 / 配对
+
+   为什么是一个**独立文件**，而不是内联在 app.js 或模板字符串里：
+     1. 导出的 .apkg 必须**完全自包含**（Anki 不能引外部 JS，卡组要能离线跑），
+        所以 app/templates_repo.py 在构建模板时把本文件**逐字内联**进模板；
+     2. 站内预览直接 <script> 引这一份。
+     同一个源 → 站内能点通的，导出到 Anki 里也同样能点通。
+
+   ⚠️ 必须同时满足三个运行环境：
+        · Anki 桌面端  QtWebEngine（现代 Chromium）
+        · AnkiDroid   Android WebView（可能是老版本）
+        · AnkiMobile  WKWebView
+      所以本文件**只用 ES5 语法**：var / function，不用箭头函数、模板字符串、
+      let/const、展开运算符、可选链。也**不引任何外部依赖**。
+
+   设计要点：
+     · 无状态机持久化 —— Anki 卡片本身是无状态的（正面渲染完就被替换），
+       跨正反面记忆只能靠 localStorage，且**必须容错**（某些环境禁用）。
+       记忆失败只影响「背面回放你的作答」，不影响答题本身。
+     · 判定逻辑全部是纯函数，便于在 Node 里单测（见 scripts/test_ix_runtime.js）。
+     · 初始化失败必须优雅降级：.ix-src 里的原始文本保留在页面上，
+       用户至少能自己读题看答案，而不是一张空白卡。
+   ========================================================================== */
+(function (global) {
+  "use strict";
+
+  /* ======================================================================
+     第一部分：纯函数（无 DOM 依赖，可单测）
+     ====================================================================== */
+
+  var LABELS = "ABCDEFGHIJ";
+
+  var RE_BR = /<br\s*\/?>/gi;
+  var RE_BLOCK_END = /<\/(?:div|p|li|tr|h[1-6]|section|blockquote)\s*>/gi;
+  var RE_TAG = /<[^>]*>/g;
+  var RE_WS_EDGE = /^[\s\u3000]+|[\s\u3000]+$/g;
+
+  function decodeEntities(s) {
+    return String(s)
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#0*39;/g, "'")
+      .replace(/&#x27;/gi, "'")
+      .replace(/&amp;/gi, "&");
+  }
+
+  /**
+   * 把 Anki 渲染后的字段 HTML 还原成「原始多行文本」。
+   *
+   * 为什么不用 textContent：Anki 会把字段里的换行渲染成 <br>，
+   * 而 textContent 对 <br> **不产生任何字符**——"A<br>B" 读出来是 "AB"，
+   * 选项/条目会全部粘成一行，解析直接失效。
+   * 所以统一走 innerHTML → 还原换行 → 去标签 → 解实体这条路径。
+   * 同时兼容「宿主没转 <br>、保留裸 \n」的情况（换行原本就在）。
+   */
+  function rawText(node) {
+    if (!node) {
+      return "";
+    }
+    var html = node.innerHTML;
+    if (html === undefined || html === null) {
+      return "";
+    }
+    html = String(html).replace(RE_BR, "\n").replace(RE_BLOCK_END, "\n");
+    html = html.replace(RE_TAG, "");
+    return decodeEntities(html);
+  }
+
+  /** 按行切分，去空行、去首尾空白。 */
+  function lines(text) {
+    var parts = String(text === undefined || text === null ? "" : text).split(/\r?\n/);
+    var out = [];
+    var i;
+    var t;
+    for (i = 0; i < parts.length; i++) {
+      t = parts[i].replace(/\u00a0/g, " ").replace(RE_WS_EDGE, "");
+      if (t) {
+        out.push(t);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 切分「一行一项」的字段内容。
+   * 兜底：只有一行且含 | 或 ｜ 时，按竖线切（模型有时会把列表压成一行）。
+   */
+  function splitItems(text) {
+    var ls = lines(text);
+    if (ls.length <= 1) {
+      var one = ls.length ? ls[0] : "";
+      if (one && /[|｜]/.test(one)) {
+        var parts = one.split(/[|｜]/);
+        var out = [];
+        var i;
+        var p;
+        for (i = 0; i < parts.length; i++) {
+          p = parts[i].replace(RE_WS_EDGE, "");
+          if (p) {
+            out.push(p);
+          }
+        }
+        if (out.length > 1) {
+          return out;
+        }
+      }
+    }
+    return ls;
+  }
+
+  // 正确项标记：* / ＊ / ✓ / ✔ / √ / +（行首）
+  var RE_CORRECT_MARK = /^[\s\u3000]*(?:\*+|＊+|✓|✔|√|\+)[\s\u3000]*/;
+  // 选项自带的字母序号：A) / B. / C、 / D：
+  var RE_OPT_LABEL = /^[A-Za-z][\s\u3000]*[).、．:：][\s\u3000]+/;
+
+  /** 选项自带 A/B/C 序号时统一剥掉（UI 会自己生成序号）。 */
+  function stripOptionLabels(items) {
+    if (items.length < 2) {
+      return items;
+    }
+    var i;
+    for (i = 0; i < items.length; i++) {
+      if (!RE_OPT_LABEL.test(items[i])) {
+        return items;
+      }
+    }
+    var out = [];
+    for (i = 0; i < items.length; i++) {
+      out.push(items[i].replace(RE_OPT_LABEL, ""));
+    }
+    return out;
+  }
+
+  /**
+   * 解析选择题选项。
+   * 返回 {items: [文本...], correct: 正确项下标（-1 表示没标）}
+   */
+  function parseOptions(text) {
+    var ls = splitItems(text);
+    var items = [];
+    var correct = -1;
+    var i;
+    var t;
+    var hit;
+    for (i = 0; i < ls.length; i++) {
+      t = ls[i];
+      hit = RE_CORRECT_MARK.test(t);
+      if (hit) {
+        t = t.replace(RE_CORRECT_MARK, "");
+      }
+      t = t.replace(RE_WS_EDGE, "");
+      if (!t) {
+        continue;
+      }
+      items.push(t);
+      if (hit && correct < 0) {
+        correct = i;
+      }
+    }
+    return { items: stripOptionLabels(items), correct: correct };
+  }
+
+  // 配对分隔符，按可信度从高到低尝试。
+  // :: 优先于 | ，因为释义文本里出现竖线的概率远高于出现双冒号。
+  var PAIR_SEPS = [/\s*::\s*/, /\s*=>\s*/, /\s*→\s*/, /\s*[|｜]\s*/];
+
+  /**
+   * 解析配对：返回 [[左, 右], ...]
+   *
+   * 逐行按分隔符优先级尝试，**不是**整段共用一种分隔符——
+   * 模型有时候一行写「::」、下一行写「=>」，按整段挑分隔符会把其中一行整条丢掉。
+   */
+  function parsePairs(text) {
+    var ls = splitItems(text);
+    var out = [];
+    var i;
+    var s;
+    for (i = 0; i < ls.length; i++) {
+      for (s = 0; s < PAIR_SEPS.length; s++) {
+        var parts = ls[i].split(PAIR_SEPS[s]);
+        if (parts.length !== 2) {
+          continue;
+        }
+        var a = parts[0].replace(RE_WS_EDGE, "");
+        var b = parts[1].replace(RE_WS_EDGE, "");
+        if (a && b) {
+          out.push([a, b]);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  var RE_BLANK = /\[\[(.+?)\]\]/g;
+
+  /**
+   * 解析「打字填空」句子，切成段落序列。
+   * 返回 [{type:"text", value:"..."} | {type:"blank", accepts:["答案1","答案2"]}]
+   * 空白答案的分隔符只用 | 与 ｜——不用 /，因为英文答案里 "/" 很常见。
+   */
+  function parseTemplate(text) {
+    var src = String(text === undefined || text === null ? "" : text);
+    var segs = [];
+    var last = 0;
+    var re = new RegExp(RE_BLANK.source, "g");
+    var m;
+    while ((m = re.exec(src)) !== null) {
+      if (m.index > last) {
+        segs.push({ type: "text", value: src.slice(last, m.index) });
+      }
+      var raw = m[1].split(/[|｜]/);
+      var accepts = [];
+      var i;
+      var a;
+      for (i = 0; i < raw.length; i++) {
+        a = raw[i].replace(RE_WS_EDGE, "");
+        if (a) {
+          accepts.push(a);
+        }
+      }
+      if (!accepts.length) {
+        accepts.push(m[1].replace(RE_WS_EDGE, ""));
+      }
+      segs.push({ type: "blank", accepts: accepts });
+      last = m.index + m[0].length;
+    }
+    if (last < src.length) {
+      segs.push({ type: "text", value: src.slice(last) });
+    }
+    return segs;
+  }
+
+  var RE_EDGE_PUNCT = /^[\s\u3000，。、；：,.;:!！?？"'“”‘’()（）\[\]【】{}<>]+|[\s\u3000，。、；：,.;:!！?？"'“”‘’()（）\[\]【】{}<>]+$/g;
+
+  /**
+   * 答案归一化：忽略大小写、所有空白、首尾标点。
+   * 目的：用户填「细胞 核」应判定为等于「细胞核」；
+   * 末尾多打一个句号不该判错。
+   */
+  function normAnswer(s) {
+    var t = String(s === undefined || s === null ? "" : s).toLowerCase();
+    t = t.replace(/\u00a0/g, " ");
+    t = t.replace(/[\s\u3000]+/g, "");
+    t = t.replace(RE_EDGE_PUNCT, "");
+    return t;
+  }
+
+  /**
+   * 「差一点点」判定：编辑距离 ≤ 1（含相邻字符换位）。
+   * 用于把「拼写差一个字母」单独标成黄色，而不是直接判错——
+   * 语言学习里「知道但手滑」和「不知道」是两件不同的事。
+   *
+   * 为什么必须含换位：「recieve」/「receive」、「teh」/「the」这类相邻字母
+   * 写反是**最高频**的拼写错误，纯 Levenshtein 会把它算成距离 2 而漏判。
+   */
+  function nearMiss(a, b) {
+    if (!a || !b) {
+      return false;
+    }
+    if (a === b) {
+      return true;
+    }
+    var x = a;
+    var y = b;
+    if (x.length > y.length) {
+      var t = x;
+      x = y;
+      y = t;
+    }
+    if (y.length - x.length > 1) {
+      return false;
+    }
+    var i;
+    if (x.length === y.length) {
+      var diff = 0;
+      var firstDiff = -1;
+      for (i = 0; i < x.length; i++) {
+        if (x.charAt(i) !== y.charAt(i)) {
+          diff++;
+          if (firstDiff < 0) {
+            firstDiff = i;
+          }
+          if (diff > 2) {
+            return false;
+          }
+        }
+      }
+      if (diff <= 1) {
+        return true;
+      }
+      // 恰好两处不同，且位置相邻且互为换位 → 视为一次手滑
+      return diff === 2 && firstDiff + 1 < x.length &&
+        x.charAt(firstDiff) === y.charAt(firstDiff + 1) &&
+        x.charAt(firstDiff + 1) === y.charAt(firstDiff);
+    }
+    i = 0;
+    var j = 0;
+    var skipped = false;
+    while (i < x.length && j < y.length) {
+      if (x.charAt(i) === y.charAt(j)) {
+        i++;
+        j++;
+        continue;
+      }
+      if (skipped) {
+        return false;
+      }
+      skipped = true;
+      j++;
+    }
+    return true;
+  }
+
+  function range(n) {
+    var out = [];
+    var i;
+    for (i = 0; i < n; i++) {
+      out.push(i);
+    }
+    return out;
+  }
+
+  function sameArray(a, b) {
+    if (!a || !b || a.length !== b.length) {
+      return false;
+    }
+    var i;
+    for (i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function rotate(a) {
+    var out = a.slice();
+    if (out.length > 1) {
+      out.push(out.shift());
+    }
+    return out;
+  }
+
+  function shuffle(arr) {
+    var a = arr.slice();
+    var i;
+    var j;
+    var t;
+    for (i = a.length - 1; i > 0; i--) {
+      j = Math.floor(Math.random() * (i + 1));
+      t = a[i];
+      a[i] = a[j];
+      a[j] = t;
+    }
+    return a;
+  }
+
+  /** 打乱 0..n-1，且保证结果不是原顺序（否则等于直接把答案给了用户）。 */
+  function shuffleNotSame(n) {
+    var base = range(n);
+    if (n < 2) {
+      return base;
+    }
+    var k;
+    var s;
+    for (k = 0; k < 12; k++) {
+      s = shuffle(base);
+      if (!sameArray(s, base)) {
+        return s;
+      }
+    }
+    return rotate(base);
+  }
+
+  /** djb2 变体：从卡片内容生成一个稳定的 localStorage 键。 */
+  function hashKey(s) {
+    var str = String(s === undefined || s === null ? "" : s);
+    var h = 5381;
+    var i;
+    for (i = 0; i < str.length; i++) {
+      h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    }
+    return "ix-" + (h >>> 0).toString(36) + "-" + str.length.toString(36);
+  }
+
+  /* ======================================================================
+     第二部分：localStorage 容错层
+     ----------------------------------------------------------------------
+     Anki 桌面端（QtWebEngine）会给 localStorage，AnkiDroid / AnkiMobile
+     通常也给，但沙箱化环境可能直接抛 SecurityError。任何一次失败都不能
+     影响答题，所以全部包在 try 里。
+     ====================================================================== */
+
+  var LS_OK = (function () {
+    try {
+      var ls = global.localStorage;
+      if (!ls) {
+        return false;
+      }
+      ls.setItem("__ix_probe", "1");
+      ls.removeItem("__ix_probe");
+      return true;
+    } catch (e) {
+      return false;
+    }
+  })();
+
+  function lsGet(key) {
+    if (!LS_OK) {
+      return null;
+    }
+    try {
+      return global.localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function lsSet(key, value) {
+    if (!LS_OK) {
+      return;
+    }
+    try {
+      global.localStorage.setItem(key, value);
+    } catch (e) {
+      /* 配额满等：忽略 */
+    }
+  }
+
+  function lsRemove(key) {
+    if (!LS_OK) {
+      return;
+    }
+    try {
+      global.localStorage.removeItem(key);
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+
+  function saveState(key, obj) {
+    try {
+      lsSet(key, JSON.stringify(obj));
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+
+  function loadState(key) {
+    var raw = lsGet(key);
+    if (!raw) {
+      return null;
+    }
+    try {
+      var v = JSON.parse(raw);
+      return v && typeof v === "object" ? v : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /* ======================================================================
+     第三部分：DOM 工具
+     ====================================================================== */
+
+  function el(tag, cls, text) {
+    var n = global.document.createElement(tag);
+    if (cls) {
+      n.className = cls;
+    }
+    if (text !== undefined && text !== null) {
+      n.textContent = String(text);
+    }
+    return n;
+  }
+
+  function addClass(node, cls) {
+    if (!node) {
+      return;
+    }
+    node.className = (node.className ? node.className + " " : "") + cls;
+  }
+
+  function removeClass(node, cls) {
+    if (!node) {
+      return;
+    }
+    var re = new RegExp("(^|\\s)" + cls + "(?=\\s|$)", "g");
+    node.className = String(node.className || "").replace(re, " ").replace(/^\s+|\s+$/g, "");
+  }
+
+  function hasClass(node, cls) {
+    if (!node || !node.className) {
+      return false;
+    }
+    return new RegExp("(^|\\s)" + cls + "(?=\\s|$)").test(String(node.className));
+  }
+
+  function closestByClass(node, cls, stopAt) {
+    var cur = node;
+    while (cur && cur !== stopAt && cur.nodeType === 1) {
+      if (hasClass(cur, cls)) {
+        return cur;
+      }
+      cur = cur.parentNode;
+    }
+    return null;
+  }
+
+  /* ======================================================================
+     第四部分：共用挂载骨架
+     ====================================================================== */
+
+  function ctxOf(root) {
+    return {
+      root: root,
+      verdict: root.querySelector(".ix-verdict"),
+      bar: root.querySelector(".ix-bar"),
+      hint: root.querySelector(".ix-hint"),
+      check: root.querySelector('[data-ix-act="check"]'),
+      reset: root.querySelector('[data-ix-act="reset"]')
+    };
+  }
+
+  function setVerdict(box, kind, title, sub) {
+    if (!box) {
+      return;
+    }
+    box.className = "ix-verdict" + (kind ? " is-" + kind : "");
+    while (box.firstChild) {
+      box.removeChild(box.firstChild);
+    }
+    box.appendChild(global.document.createTextNode(String(title)));
+    if (sub) {
+      box.appendChild(el("span", "ix-sub", sub));
+    }
+    box.hidden = false;
+  }
+
+  function lockRoot(root) {
+    if (!hasClass(root, "is-locked")) {
+      addClass(root, "is-locked");
+    }
+  }
+
+  /**
+   * 卡片内容的稳定标识：题型 + 题干归一化 + 数据字段归一化。
+   * 正反面两次渲染必须算出同一个键，否则「背面回放你的作答」永远读不到。
+   * 注意必须**在改写 DOM 之前**调用（改写后就取不到原始内容了）。
+   */
+  function cardKey(root) {
+    var q = root.querySelector(".ix-q");
+    var s = root.querySelector(".ix-src") || root.querySelector(".ix-sent");
+    var kind = root.getAttribute("data-ix") || "";
+    return hashKey(kind + "\u0001" + normAnswer(rawText(q)) + "\u0001" + normAnswer(rawText(s)));
+  }
+
+  /* 改写前的快照：供「重做」按钮把原始内容还原回去。 */
+  function snapshot(host) {
+    if (host && host.__ixRawHtml === undefined) {
+      host.__ixRawHtml = host.innerHTML;
+      host.__ixRawClass = host.className;
+    }
+  }
+
+  function restoreHost(host) {
+    if (host && host.__ixRawHtml !== undefined) {
+      host.innerHTML = host.__ixRawHtml;
+      host.className = host.__ixRawClass;
+    }
+  }
+
+  /**
+   * 重做：清掉本卡的记忆 → 还原被改写的 DOM → 重新挂载。
+   * 之所以要还原 DOM 而不是重新读原始字段：
+   * 挂载过程已经把 <div class="ix-src">原始文本</div> 换成了按钮列表，
+   * 原始文本只存在于 __ixRawHtml 里了。
+   */
+  function resetRoot(root, key, hosts) {
+    lsRemove(key);
+    var i;
+    for (i = 0; i < hosts.length; i++) {
+      restoreHost(hosts[i]);
+    }
+    removeClass(root, "is-locked");
+    root.removeAttribute("data-ix-ready");
+    var v = root.querySelector(".ix-verdict");
+    if (v) {
+      v.hidden = true;
+      v.innerHTML = "";
+    }
+    var h = root.querySelector(".ix-hint");
+    if (h) {
+      h.innerHTML = "";
+    }
+    mountOne(root);
+  }
+
+  /* ======================================================================
+     第五部分：选择题
+     ====================================================================== */
+
+  function mountChoice(root, mode, ctx) {
+    var host = root.querySelector(".ix-src");
+    if (!host) {
+      return false;
+    }
+    var parsed = parseOptions(rawText(host));
+    var opts = parsed.items;
+    if (!opts.length) {
+      setVerdict(ctx.verdict, "info", "这道题没有选项数据",
+        "Options 字段为空。每行写一个选项，正确项行首加 *。");
+      return true;
+    }
+
+    var key = cardKey(root);
+    var saved = loadState(key) || {};
+    var picked = typeof saved.pick === "number" ? saved.pick : -1;
+    var correct = parsed.correct;
+    var locked = (mode === "answer");
+    var btns = [];
+
+    snapshot(host);
+    addClass(host, "ix-opts");
+    host.innerHTML = "";
+
+    var i;
+    for (i = 0; i < opts.length; i++) {
+      var b = el("button", "ix-opt");
+      b.type = "button";
+      b.appendChild(el("span", "ix-opt-key", LABELS.charAt(i) || String(i + 1)));
+      b.appendChild(el("span", "ix-opt-txt", opts[i]));
+      (function (node, idx) {
+        node.addEventListener("click", function () {
+          if (locked) {
+            return;
+          }
+          picked = idx;
+          paint();
+          saveState(key, { pick: picked });
+        });
+      })(b, i);
+      btns.push(b);
+      host.appendChild(b);
+    }
+
+    function paint() {
+      var j;
+      for (j = 0; j < btns.length; j++) {
+        var cls = "ix-opt";
+        if (locked) {
+          if (j === correct) {
+            cls += " is-correct";
+          } else if (j === picked) {
+            cls += " is-wrong";
+          } else {
+            cls += " is-dim";
+          }
+        } else if (j === picked) {
+          cls += " is-picked";
+        }
+        btns[j].className = cls;
+      }
+    }
+
+    function judge() {
+      locked = true;
+      lockRoot(root);
+      paint();
+      if (ctx.check) {
+        ctx.check.disabled = true;
+      }
+      if (correct < 0) {
+        setVerdict(ctx.verdict, "info", "本题没有标注正确答案",
+          "在正确选项行首加一个 * 即可。");
+        return;
+      }
+      var ans = LABELS.charAt(correct) || String(correct + 1);
+      if (picked < 0) {
+        setVerdict(ctx.verdict, "info", "正确答案：" + ans, "你还没有选。");
+      } else if (picked === correct) {
+        setVerdict(ctx.verdict, "ok", "答对了 · " + ans);
+      } else {
+        setVerdict(ctx.verdict, "bad",
+          "答错了 · 你选了 " + (LABELS.charAt(picked) || String(picked + 1)),
+          "正确答案是 " + ans);
+      }
+    }
+
+    paint();
+
+    if (mode === "answer") {
+      locked = true;
+      lockRoot(root);
+      paint();
+      if (correct < 0) {
+        setVerdict(ctx.verdict, "info", "本题没有标注正确答案");
+      } else if (picked < 0) {
+        setVerdict(ctx.verdict, "info",
+          "正确答案：" + (LABELS.charAt(correct) || String(correct + 1)),
+          "本题没有记录到你的作答。");
+      } else if (picked === correct) {
+        setVerdict(ctx.verdict, "ok", "你答对了");
+      } else {
+        setVerdict(ctx.verdict, "bad",
+          "你选了 " + (LABELS.charAt(picked) || String(picked + 1)),
+          "正确答案是 " + (LABELS.charAt(correct) || String(correct + 1)));
+      }
+      return true;
+    }
+
+    if (ctx.check) {
+      ctx.check.addEventListener("click", judge);
+    }
+    if (ctx.reset) {
+      ctx.reset.addEventListener("click", function () {
+        resetRoot(root, key, [host]);
+      });
+    }
+    if (ctx.hint) {
+      ctx.hint.textContent = "先想清楚，再点「检查答案」。";
+    }
+    return true;
+  }
+
+  /* ======================================================================
+     第六部分：打字填空
+     ====================================================================== */
+
+  function unitWidth(s) {
+    // 中日韩字符按 2 个宽度单位算，其余按 1，用于把输入框撑到合适宽度
+    var str = String(s || "");
+    var u = 0;
+    var i;
+    var c;
+    for (i = 0; i < str.length; i++) {
+      c = str.charCodeAt(i);
+      u += (c > 0x2e80 && c < 0xa4d0) || (c >= 0xac00 && c <= 0xd7a3) ||
+        (c >= 0xf900 && c <= 0xfaff) || (c >= 0xff00 && c <= 0xff60) ? 2 : 1;
+    }
+    return u;
+  }
+
+  function autoSize(input) {
+    var u = unitWidth(input.value);
+    var px = Math.max(76, Math.min(360, u * 9.5 + 26));
+    input.style.width = px + "px";
+  }
+
+  function mountTypein(root, mode, ctx) {
+    var host = root.querySelector(".ix-sent");
+    if (!host) {
+      return false;
+    }
+    var raw = rawText(host);
+    var segs = parseTemplate(raw);
+    var blanks = [];
+    var i;
+    for (i = 0; i < segs.length; i++) {
+      if (segs[i].type === "blank") {
+        blanks.push(segs[i]);
+      }
+    }
+    if (!blanks.length) {
+      setVerdict(ctx.verdict, "info", "这道题没有挖空标记",
+        "把要考的部分写成 [[答案]]；同一个空有多个正确写法时用 [[答案1|答案2]]。");
+      return true;
+    }
+
+    var key = cardKey(root);
+    var saved = loadState(key) || {};
+    var typedSaved = saved.typed && saved.typed.length ? saved.typed : null;
+
+    snapshot(host);
+    host.innerHTML = "";
+
+    if (mode === "answer") {
+      return fillAnswer(root, ctx, segs, key, typedSaved);
+    }
+
+    var inputs = [];
+    for (i = 0; i < segs.length; i++) {
+      if (segs[i].type === "text") {
+        host.appendChild(global.document.createTextNode(segs[i].value));
+        continue;
+      }
+      var idx = inputs.length;
+      var inp = global.document.createElement("input");
+      inp.type = "text";
+      inp.className = "ix-blank";
+      inp.setAttribute("autocomplete", "off");
+      inp.setAttribute("autocorrect", "off");
+      inp.setAttribute("autocapitalize", "off");
+      inp.setAttribute("spellcheck", "false");
+      if (typedSaved && typedSaved[idx]) {
+        inp.value = typedSaved[idx];
+      }
+      autoSize(inp);
+      inp.addEventListener("input", function () {
+        autoSize(this);
+      });
+      inputs.push(inp);
+      host.appendChild(inp);
+    }
+
+    var locked = false;
+
+    function judge() {
+      if (locked) {
+        return;
+      }
+      locked = true;
+      lockRoot(root);
+      var typed = [];
+      var okCount = 0;
+      var nearCount = 0;
+      var emptyCount = 0;
+      var j;
+      var k;
+      for (j = 0; j < inputs.length; j++) {
+        typed.push(inputs[j].value);
+      }
+      for (j = 0; j < blanks.length; j++) {
+        var v = normAnswer(typed[j]);
+        var accepts = blanks[j].accepts;
+        var hit = false;
+        var near = false;
+        for (k = 0; k < accepts.length; k++) {
+          if (v && v === normAnswer(accepts[k])) {
+            hit = true;
+            break;
+          }
+        }
+        if (!hit) {
+          for (k = 0; k < accepts.length; k++) {
+            if (nearMiss(v, normAnswer(accepts[k]))) {
+              near = true;
+              break;
+            }
+          }
+        }
+        var cls = "ix-blank";
+        if (hit) {
+          cls += " is-correct";
+          okCount++;
+        } else if (!v) {
+          cls += " is-wrong is-empty";
+          emptyCount++;
+        } else if (near) {
+          cls += " is-near";
+          nearCount++;
+        } else {
+          cls += " is-wrong";
+        }
+        inputs[j].className = cls;
+        inputs[j].readOnly = true;
+      }
+      saveState(key, { typed: typed });
+      if (ctx.check) {
+        ctx.check.disabled = true;
+      }
+
+      var total = blanks.length;
+      var answerLine = answersLine(blanks);
+      if (okCount === total) {
+        setVerdict(ctx.verdict, "ok", "全部答对 · " + total + " / " + total);
+      } else if (nearCount > 0 && okCount + nearCount === total) {
+        setVerdict(ctx.verdict, "near", "拼写差一点",
+          "意思对了，注意拼写。\n" + answerLine);
+      } else {
+        var detail = "答对 " + okCount + " / " + total;
+        if (emptyCount) {
+          detail += "，有 " + emptyCount + " 个空没填";
+        }
+        setVerdict(ctx.verdict, "bad", detail, answerLine);
+      }
+    }
+
+    if (ctx.check) {
+      ctx.check.addEventListener("click", judge);
+    }
+    if (ctx.reset) {
+      ctx.reset.addEventListener("click", function () {
+        resetRoot(root, key, [host]);
+      });
+    }
+    if (ctx.hint) {
+      ctx.hint.textContent = "填完后点「检查答案」，大小写和首尾标点不影响判定。";
+    }
+    return true;
+  }
+
+  function answersLine(blanks) {
+    var parts = [];
+    var i;
+    for (i = 0; i < blanks.length; i++) {
+      parts.push((i + 1) + ". " + blanks[i].accepts.join(" / "));
+    }
+    return "正确答案：\n" + parts.join("\n");
+  }
+
+  /** 背面：把挖空位置换成绿色正确答案，并回放用户的作答。 */
+  function fillAnswer(root, ctx, segs, key, typedSaved) {
+    var host = root.querySelector(".ix-sent");
+    var blanks = [];
+    var i;
+    for (i = 0; i < segs.length; i++) {
+      if (segs[i].type === "blank") {
+        blanks.push(segs[i]);
+        host.appendChild(el("span", "ix-reveal", segs[i].accepts[0]));
+      } else {
+        host.appendChild(global.document.createTextNode(segs[i].value));
+      }
+    }
+    lockRoot(root);
+
+    if (!typedSaved) {
+      setVerdict(ctx.verdict, "info", "正确答案已用绿色标出",
+        "没有读到你的作答记录（可能是在其它设备上复习的，或本环境禁用了本地存储）。");
+      return true;
+    }
+
+    var okCount = 0;
+    var wrong = [];
+    var j;
+    var k;
+    for (j = 0; j < blanks.length; j++) {
+      var v = normAnswer(typedSaved[j]);
+      var accepts = blanks[j].accepts;
+      var hit = false;
+      for (k = 0; k < accepts.length; k++) {
+        if (v && v === normAnswer(accepts[k])) {
+          hit = true;
+          break;
+        }
+      }
+      if (hit) {
+        okCount++;
+      } else {
+        wrong.push((j + 1) + ". 你写「" + String(typedSaved[j] || "").replace(RE_WS_EDGE, "") +
+          "」→ 应为「" + accepts.join(" / ") + "」");
+      }
+    }
+    if (okCount === blanks.length) {
+      setVerdict(ctx.verdict, "ok", "你上次全填对了 · " + okCount + " / " + blanks.length);
+    } else {
+      setVerdict(ctx.verdict, "bad",
+        "上次答对 " + okCount + " / " + blanks.length,
+        wrong.join("\n"));
+    }
+    return true;
+  }
+
+  /* ======================================================================
+     第七部分：排序
+     ====================================================================== */
+
+  function mountOrder(root, mode, ctx) {
+    var host = root.querySelector(".ix-src");
+    if (!host) {
+      return false;
+    }
+    var correct = splitItems(rawText(host));
+    var n = correct.length;
+    if (n < 2) {
+      setVerdict(ctx.verdict, "info", "这道题至少需要 2 个条目",
+        "Items 字段每行写一项，并且**按正确顺序**书写，平台会在复习时自动打乱。");
+      return true;
+    }
+
+    var key = cardKey(root);
+    var saved = loadState(key) || {};
+    var savedOrder = (saved.order && saved.order.length === n) ? saved.order.slice() : null;
+    var order;
+    if (mode === "answer") {
+      order = savedOrder || range(n);
+    } else {
+      order = savedOrder || shuffleNotSame(n);
+    }
+
+    snapshot(host);
+    host.innerHTML = "";
+    var list = el("ul", "ix-list");
+    host.appendChild(list);
+
+    var items = [];
+    var i;
+    for (i = 0; i < n; i++) {
+      var li = el("li", "ix-item");
+      li.setAttribute("data-idx", String(order[i]));
+      li.appendChild(el("span", "ix-grip", "⋮⋮"));
+      li.appendChild(el("span", "ix-num", String(i + 1)));
+      li.appendChild(el("span", "ix-txt", correct[order[i]]));
+      list.appendChild(li);
+      items.push(li);
+    }
+    order = null;
+
+    var locked = (mode === "answer");
+    var sel = -1;
+    var pressEl = null;
+    var pressY = 0;
+    var dragging = false;
+    var dragEl = null;
+    var skipClick = false;
+
+    function domOrder() {
+      var kids = list.querySelectorAll(".ix-item");
+      var arr = [];
+      var j;
+      for (j = 0; j < kids.length; j++) {
+        arr.push(parseInt(kids[j].getAttribute("data-idx"), 10));
+        items[j] = kids[j];
+        var num = kids[j].querySelector(".ix-num");
+        if (num) {
+          num.textContent = String(j + 1);
+        }
+      }
+      return arr;
+    }
+
+    function persist() {
+      saveState(key, { order: domOrder() });
+    }
+
+    function paint() {
+      var j;
+      for (j = 0; j < items.length; j++) {
+        var cls = "ix-item";
+        if (j === sel) {
+          cls += " is-sel";
+        }
+        items[j].className = cls;
+      }
+    }
+
+    function flipMove(action) {
+      var kids = list.querySelectorAll(".ix-item");
+      var firsts = [];
+      var j;
+      for (j = 0; j < kids.length; j++) {
+        firsts.push({
+          el: kids[j],
+          top: kids[j].getBoundingClientRect().top
+        });
+      }
+      action();
+      for (j = 0; j < firsts.length; j++) {
+        var elNode = firsts[j].el;
+        if (elNode === dragEl) {
+          continue;
+        }
+        var newTop = elNode.getBoundingClientRect().top;
+        var dy = firsts[j].top - newTop;
+        if (dy !== 0) {
+          elNode.style.transition = "none";
+          elNode.style.transform = "translateY(" + dy + "px)";
+        }
+      }
+      void list.offsetWidth;
+      for (j = 0; j < firsts.length; j++) {
+        var elNode2 = firsts[j].el;
+        if (elNode2 === dragEl) {
+          continue;
+        }
+        elNode2.style.transition = "transform 0.22s cubic-bezier(0.2, 0, 0, 1)";
+        elNode2.style.transform = "";
+      }
+    }
+
+    function onItemClick(li) {
+      if (locked) {
+        return;
+      }
+      var pos = -1;
+      var j;
+      for (j = 0; j < items.length; j++) {
+        if (items[j] === li) {
+          pos = j;
+          break;
+        }
+      }
+      if (pos < 0) {
+        return;
+      }
+      if (sel < 0) {
+        sel = pos;
+        paint();
+        return;
+      }
+      if (sel === pos) {
+        sel = -1;
+        paint();
+        return;
+      }
+      var node = items[sel];
+      var target = items[pos];
+      flipMove(function () {
+        if (pos > sel) {
+          list.insertBefore(node, target.nextSibling);
+        } else {
+          list.insertBefore(node, target);
+        }
+      });
+      sel = -1;
+      persist();
+      paint();
+    }
+
+    list.addEventListener("click", function (e) {
+      var li = closestByClass(e.target, "ix-item", list);
+      if (!li) {
+        return;
+      }
+      if (skipClick) {
+        skipClick = false;
+        return;
+      }
+      onItemClick(li);
+    });
+
+    /* --- 拖拽（Pointer Events，含 FLIP 平滑位移动画）---
+       只做「增强」：没 PointerEvent 的老 WebView 上，上面的点击移动依然可用。
+       为什么不用 HTML5 原生 drag&drop：它在触屏上根本不触发，
+       Anki 的主要使用场景就是手机，靠它等于手机上完全不能拖。 */
+    if (global.PointerEvent) {
+      list.addEventListener("pointerdown", function (e) {
+        if (locked || dragging) {
+          return;
+        }
+        var li = closestByClass(e.target, "ix-item", list);
+        if (!li) {
+          return;
+        }
+        pressEl = li;
+        pressY = e.clientY;
+      });
+
+      global.document.addEventListener("pointermove", function (e) {
+        if (!pressEl) {
+          return;
+        }
+        if (!dragging) {
+          if (Math.abs(e.clientY - pressY) < 6) {
+            return;
+          }
+          dragging = true;
+          dragEl = pressEl;
+          addClass(dragEl, "is-dragging");
+          sel = -1;
+          paint();
+        }
+        var y = e.clientY;
+        var kids = list.querySelectorAll(".ix-item");
+        var j;
+        for (j = 0; j < kids.length; j++) {
+          var k = kids[j];
+          if (k === dragEl) {
+            continue;
+          }
+          var r = k.getBoundingClientRect();
+          if (y >= r.top && y <= r.bottom) {
+            var targetNode = (y < r.top + r.height / 2) ? k : k.nextSibling;
+            if (targetNode !== dragEl && targetNode !== dragEl.nextSibling) {
+              flipMove(function () {
+                list.insertBefore(dragEl, targetNode);
+              });
+            }
+            break;
+          }
+        }
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+      });
+
+      var endDrag = function () {
+        if (dragEl) {
+          removeClass(dragEl, "is-dragging");
+          dragEl.style.transform = "";
+          dragEl.style.transition = "";
+        }
+        var allKids = list.querySelectorAll(".ix-item");
+        var m;
+        for (m = 0; m < allKids.length; m++) {
+          allKids[m].style.transform = "";
+          allKids[m].style.transition = "";
+        }
+        if (dragging) {
+          skipClick = true;
+          persist();
+        }
+        pressEl = null;
+        dragEl = null;
+        dragging = false;
+      };
+      global.document.addEventListener("pointerup", endDrag);
+      global.document.addEventListener("pointercancel", endDrag);
+    }
+
+    function judge() {
+      if (locked) {
+        return;
+      }
+      locked = true;
+      lockRoot(root);
+      sel = -1;
+      var arr = domOrder();
+      saveState(key, { order: arr });
+      var okCount = 0;
+      var wrongPos = [];
+      var j;
+      for (j = 0; j < arr.length; j++) {
+        var good = (arr[j] === j);
+        items[j].className = "ix-item " + (good ? "is-correct" : "is-wrong");
+        var num = items[j].querySelector(".ix-num");
+        if (num) {
+          num.textContent = good ? "✓" : "✗";
+        }
+        if (good) {
+          okCount++;
+        } else {
+          wrongPos.push(j + 1);
+        }
+      }
+      if (ctx.check) {
+        ctx.check.disabled = true;
+      }
+      if (okCount === n) {
+        setVerdict(ctx.verdict, "ok", "顺序完全正确");
+      } else {
+        setVerdict(ctx.verdict, "bad",
+          "答对 " + okCount + " / " + n + "（第 " + wrongPos.join("、") + " 位放错了）",
+          "正确顺序：" + correct.join(" → "));
+      }
+    }
+
+    if (mode === "answer") {
+      lockRoot(root);
+      var userOrder = savedOrder;
+      var okAll = true;
+      var wrongCount = 0;
+      var j;
+      for (j = 0; j < n; j++) {
+        items[j].className = "ix-item is-correct";
+        var num = items[j].querySelector(".ix-num");
+        if (num) {
+          num.textContent = String(j + 1);
+        }
+        if (userOrder && userOrder[j] !== j) {
+          okAll = false;
+          wrongCount++;
+          var stray = itemsForIndex(items, list, userOrder[j]);
+          if (stray) {
+            stray.className = "ix-item is-wrong";
+          }
+        }
+      }
+      if (!userOrder) {
+        setVerdict(ctx.verdict, "info", "正确顺序已标出",
+          "没有读到你的排序记录。");
+      } else if (okAll) {
+        setVerdict(ctx.verdict, "ok", "你上次排对了");
+      } else {
+        setVerdict(ctx.verdict, "bad",
+          "上次有 " + wrongCount + " 项位置不对",
+          "正确顺序：" + correct.join(" → "));
+      }
+      return true;
+    }
+
+    if (ctx.check) {
+      ctx.check.addEventListener("click", judge);
+    }
+    if (ctx.reset) {
+      ctx.reset.addEventListener("click", function () {
+        resetRoot(root, key, [host]);
+      });
+    }
+    if (ctx.hint) {
+      ctx.hint.textContent = "拖动条目排序；也可以先点一个，再点目标位置。";
+    }
+    return true;
+  }
+
+  function itemsForIndex(items, list, idx) {
+    var kids = list.querySelectorAll(".ix-item");
+    var j;
+    for (j = 0; j < kids.length; j++) {
+      if (parseInt(kids[j].getAttribute("data-idx"), 10) === idx) {
+        return kids[j];
+      }
+    }
+    return null;
+  }
+
+  /* ======================================================================
+     第八部分：配对
+     ====================================================================== */
+
+  function mountMatch(root, mode, ctx) {
+    var host = root.querySelector(".ix-src");
+    if (!host) {
+      return false;
+    }
+    var pairs = parsePairs(rawText(host));
+    var n = pairs.length;
+    if (n < 2) {
+      setVerdict(ctx.verdict, "info", "这道题至少需要 2 组配对",
+        "Pairs 字段每行写一组，左右用 :: 分隔，例如：光合作用 :: 把光能转成化学能");
+      return true;
+    }
+
+    var key = cardKey(root);
+    var saved = loadState(key) || {};
+    var leftOrder;
+    var rightOrder;
+    /*
+      配对题的布局必须**沿用记忆里的乱序**：
+      背面要回放「你连了哪几组」，如果背面重新洗一次牌，
+      用户上一轮的连线位置就全对不上了，回放无从谈起。
+    */
+    if (saved.left && saved.left.length === n && saved.right && saved.right.length === n) {
+      leftOrder = saved.left.slice();
+      rightOrder = saved.right.slice();
+    } else if (mode === "answer") {
+      leftOrder = range(n);
+      rightOrder = range(n);
+    } else {
+      leftOrder = shuffleNotSame(n);
+      rightOrder = shuffleNotSame(n);
+      if (sameArray(leftOrder, rightOrder)) {
+        rightOrder = rotate(rightOrder);
+      }
+      saveState(key, { left: leftOrder, right: rightOrder, links: {} });
+    }
+
+    snapshot(host);
+    host.innerHTML = "";
+    var cols = el("div", "ix-cols");
+    var colL = el("div", "ix-col");
+    var colR = el("div", "ix-col");
+    cols.appendChild(colL);
+    cols.appendChild(colR);
+    host.appendChild(cols);
+
+    var lNodes = [];
+    var rNodes = [];
+    var i;
+    var j;
+    for (i = 0; i < n; i++) {
+      var lb = el("button", "ix-card", pairs[leftOrder[i]][0]);
+      lb.type = "button";
+      lb.setAttribute("data-idx", String(leftOrder[i]));
+      colL.appendChild(lb);
+      lNodes[leftOrder[i]] = lb;
+    }
+    for (i = 0; i < n; i++) {
+      var rb = el("button", "ix-card", pairs[rightOrder[i]][1]);
+      rb.type = "button";
+      rb.setAttribute("data-idx", String(rightOrder[i]));
+      colR.appendChild(rb);
+      rNodes[rightOrder[i]] = rb;
+    }
+
+    var links = {};   // left idx -> right idx
+    var back = {};    // right idx -> left idx
+    var locked = (mode === "answer");
+    var sel = -1;
+
+    if (saved.links && typeof saved.links === "object") {
+      for (i = 0; i < n; i++) {
+        var r0 = saved.links[String(i)];
+        if (typeof r0 === "number" && r0 >= 0 && r0 < n && back[r0] === undefined) {
+          links[i] = r0;
+          back[r0] = i;
+        }
+      }
+    }
+
+    function unlinkLeft(li) {
+      var r = links[li];
+      if (r !== undefined) {
+        delete links[li];
+        delete back[r];
+      }
+    }
+
+    function unlinkRight(ri) {
+      var l = back[ri];
+      if (l !== undefined) {
+        delete back[ri];
+        delete links[l];
+      }
+    }
+
+    function persist() {
+      var obj = {};
+      for (var k in links) {
+        if (Object.prototype.hasOwnProperty.call(links, k)) {
+          obj[k] = links[k];
+        }
+      }
+      saveState(key, { left: leftOrder, right: rightOrder, links: obj });
+    }
+
+    function paint() {
+      for (var li = 0; li < n; li++) {
+        var node = lNodes[li];
+        if (!node) {
+          continue;
+        }
+        var cls = "ix-card";
+        if (sel === li) {
+          cls += " is-sel";
+        }
+        if (links[li] !== undefined) {
+          cls += " is-linked";
+          node.setAttribute("data-badge", String(li + 1));
+        } else {
+          node.removeAttribute("data-badge");
+        }
+        node.className = cls;
+      }
+      for (var ri = 0; ri < n; ri++) {
+        var rn = rNodes[ri];
+        if (!rn) {
+          continue;
+        }
+        var rcls = "ix-card";
+        if (back[ri] !== undefined) {
+          rcls += " is-linked";
+          rn.setAttribute("data-badge", String(back[ri] + 1));
+        } else {
+          rn.removeAttribute("data-badge");
+        }
+        rn.className = rcls;
+      }
+    }
+
+    for (i = 0; i < n; i++) {
+      (function (li) {
+        var node = lNodes[li];
+        if (!node) {
+          return;
+        }
+        node.addEventListener("click", function () {
+          if (locked) {
+            return;
+          }
+          if (links[li] !== undefined) {
+            unlinkLeft(li);
+            persist();
+            paint();
+            return;
+          }
+          sel = (sel === li) ? -1 : li;
+          paint();
+        });
+      })(i);
+      (function (ri) {
+        var node = rNodes[ri];
+        if (!node) {
+          return;
+        }
+        node.addEventListener("click", function () {
+          if (locked) {
+            return;
+          }
+          if (back[ri] !== undefined) {
+            unlinkRight(ri);
+            persist();
+            paint();
+            return;
+          }
+          if (sel < 0) {
+            return;
+          }
+          links[sel] = ri;
+          back[ri] = sel;
+          sel = -1;
+          persist();
+          paint();
+        });
+      })(i);
+    }
+
+    function judge() {
+      if (locked) {
+        return;
+      }
+      locked = true;
+      lockRoot(root);
+      sel = -1;
+      var okCount = 0;
+      for (var li = 0; li < n; li++) {
+        var good = (links[li] === li);
+        var ln = lNodes[li];
+        var rn = links[li] !== undefined ? rNodes[links[li]] : null;
+        if (ln) {
+          ln.className = "ix-card is-linked " + (good ? "is-correct" : "is-wrong");
+          ln.setAttribute("data-badge", String(li + 1));
+        }
+        if (rn) {
+          rn.className = "ix-card is-linked " + (good ? "is-correct" : "is-wrong");
+          rn.setAttribute("data-badge", String(li + 1));
+        }
+        if (good) {
+          okCount++;
+        }
+      }
+      persist();
+      if (ctx.check) {
+        ctx.check.disabled = true;
+      }
+      if (okCount === n) {
+        setVerdict(ctx.verdict, "ok", "全部配对正确 · " + n + " / " + n);
+      } else {
+        var missed = [];
+        for (var k = 0; k < n; k++) {
+          if (links[k] !== k) {
+            missed.push((k + 1) + ". " + pairs[k][0] + " → " + pairs[k][1]);
+          }
+        }
+        setVerdict(ctx.verdict, "bad",
+          "配对正确 " + okCount + " / " + n,
+          "正确答案：\n" + missed.join("\n"));
+      }
+    }
+
+    paint();
+
+    if (mode === "answer") {
+      lockRoot(root);
+      for (i = 0; i < n; i++) {
+        if (lNodes[i]) {
+          lNodes[i].className = "ix-card is-linked is-correct";
+          lNodes[i].setAttribute("data-badge", String(i + 1));
+        }
+        if (rNodes[i]) {
+          rNodes[i].className = "ix-card is-linked is-correct";
+          rNodes[i].setAttribute("data-badge", String(i + 1));
+        }
+      }
+      var savedLinks = saved.links || {};
+      var have = false;
+      for (j = 0; j < n; j++) {
+        if (typeof savedLinks[String(j)] === "number") {
+          have = true;
+          break;
+        }
+      }
+      if (!have) {
+        setVerdict(ctx.verdict, "info", "正确答案已用相同数字标出",
+          "没有读到你的配对记录。");
+      } else {
+        var wrongCount = 0;
+        var lines = [];
+        for (j = 0; j < n; j++) {
+          var mine = savedLinks[String(j)];
+          if (mine === j) {
+            continue;
+          }
+          wrongCount++;
+          lines.push((j + 1) + ". " + pairs[j][0] + " → 你配了「" +
+            (typeof mine === "number" ? pairs[mine][1] : "（空）") +
+            "」，应为「" + pairs[j][1] + "」");
+        }
+        if (wrongCount === 0) {
+          setVerdict(ctx.verdict, "ok", "你上次全配对了");
+        } else {
+          setVerdict(ctx.verdict, "bad",
+            "上次配错 " + wrongCount + " 组", lines.join("\n"));
+        }
+      }
+      return true;
+    }
+
+    if (ctx.check) {
+      ctx.check.addEventListener("click", judge);
+    }
+    if (ctx.reset) {
+      ctx.reset.addEventListener("click", function () {
+        resetRoot(root, key, [host]);
+      });
+    }
+    if (ctx.hint) {
+      ctx.hint.textContent = "点左边的项目，再点右边它对应的答案；再点一次可取消。";
+    }
+    return true;
+  }
+
+  /* ======================================================================
+     第九部分：挂载入口
+     ====================================================================== */
+
+  var MOUNTERS = {
+    choice: mountChoice,
+    typein: mountTypein,
+    order: mountOrder,
+    match: mountMatch
+  };
+
+  /** 挂载单个根节点。返回 true 表示确实挂上了（用于统计/测试）。 */
+  function mountOne(root) {
+    if (!root || root.getAttribute("data-ix-ready") === "1") {
+      return false;
+    }
+    var kind = root.getAttribute("data-ix");
+    var mounter = MOUNTERS[kind];
+    if (!mounter) {
+      return false;
+    }
+    var mode = root.getAttribute("data-ix-mode") === "answer" ? "answer" : "ask";
+    var ok = false;
+    try {
+      ok = mounter(root, mode, ctxOf(root)) === true;
+    } catch (e) {
+      // 初始化失败必须留下痕迹且**不破坏页面**：
+      // 被改写的 DOM 可能只改了一半，把原始内容还原回去最安全。
+      root.setAttribute("data-ix-error", String((e && e.message) || e));
+      ok = false;
+    }
+    if (ok) {
+      root.setAttribute("data-ix-ready", "1");
+    }
+    return ok;
+  }
+
+  /** 挂载 scope（默认整篇文档）里所有未挂载的交互根节点，返回挂载数。 */
+  function mountAll(scope) {
+    var doc = scope || global.document;
+    if (!doc || !doc.querySelectorAll) {
+      return 0;
+    }
+    var nodes = doc.querySelectorAll("[data-ix]");
+    var n = 0;
+    var i;
+    for (i = 0; i < nodes.length; i++) {
+      if (mountOne(nodes[i])) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  var IX = {
+    // 纯函数（测试直接打这些）
+    rawText: rawText,
+    lines: lines,
+    splitItems: splitItems,
+    parseOptions: parseOptions,
+    parsePairs: parsePairs,
+    parseTemplate: parseTemplate,
+    normAnswer: normAnswer,
+    nearMiss: nearMiss,
+    shuffle: shuffle,
+    shuffleNotSame: shuffleNotSame,
+    range: range,
+    sameArray: sameArray,
+    hashKey: hashKey,
+    saveState: saveState,
+    loadState: loadState,
+    // DOM 入口
+    mount: mountOne,
+    mountAll: mountAll,
+    storageAvailable: LS_OK
+  };
+
+  global.IX = IX;
+
+  // 供 Node 单测 require
+  if (typeof module !== "undefined" && module && module.exports) {
+    module.exports = IX;
+  }
+
+  /* 自动挂载。
+     在 Anki 里，模板末尾的内联 <script> 同步执行时卡片 DOM 已经就绪
+     （脚本位于模板末尾），所以可以直接挂。
+     在站内预览里，卡片是 innerHTML 注入的，内联脚本**不会被执行**，
+     由 app.js 在渲染完成后显式调用 IX.mountAll()。 */
+  function autoInit() {
+    try {
+      mountAll(global.document);
+    } catch (e) {
+      /* 静默：绝不让交互初始化异常影响整页 */
+    }
+  }
+
+  if (global.document) {
+    if (global.document.readyState === "loading") {
+      global.document.addEventListener("DOMContentLoaded", autoInit);
+      // 兜底：万一 DOMContentLoaded 因为宿主环境特殊（脚本被二次注入、
+      // 文档其实早已加载完、事件已被消费）而不再触发，这一次 setTimeout
+      // 保证仍然会挂上。mountAll 是幂等的，重复触发没有副作用。
+      global.setTimeout(autoInit, 0);
+    } else {
+      autoInit();
+    }
+  }
+})(typeof window !== "undefined" ? window : this);
+
+</script>

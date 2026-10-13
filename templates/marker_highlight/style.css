@@ -1,0 +1,204 @@
+
+/* ===== 基础变量 + 暗黑模式 ===== */
+.card {
+  --bg: #ffffff;
+  --surface: #f7f8fa;
+  --text: #1f2329;
+  --muted: #8a919f;
+  --border: #e5e7eb;
+  --accent: #185fa5;
+  --accent-soft: #e6f1fb;
+  box-sizing: border-box;
+  max-width: 560px;
+  margin: 0 auto;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "PingFang SC", "Segoe UI", "Noto Sans", sans-serif;
+  font-size: 18px;
+  line-height: 1.65;
+  padding: 28px 30px;
+  border-radius: 16px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .card {
+    --bg: #1e2126;
+    --surface: #2a2e35;
+    --text: #e6e8eb;
+    --muted: #9aa3af;
+    --border: #3a3f47;
+    --accent: #6cb2ff;
+    --accent-soft: #25364a;
+  }
+}
+
+.card .front-label {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+.card .back-label {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.card hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 18px 0;
+}
+.card .license-foot {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ============ 词典条目块（ECDICT） ============
+   这份 CSS 与 static/style.css 里的 .dict-entry 是**同一套类名**。
+   后端（app/dictionary.py 的 render_entry_html）只渲染一次 HTML，
+   两边各自提供样式，避免「站内预览好看、导出到 Anki 变样」的漂移。
+   改动这里时务必同步改 static/style.css 里对应的那段。 */
+.card .dict-entry {
+  margin-top: 20px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.card .de-head { margin-bottom: 10px; }
+.card .de-source {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.card .de-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.card .de-star { color: #e0a92b; letter-spacing: 1px; font-size: 14px; }
+.card .de-oxford {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 9px;
+}
+.card .de-senses,
+.card .de-defs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: none;
+}
+.card .de-sense {
+  display: flex;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.card .de-sense:last-child { border-bottom: none; }
+.card .de-pos {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--accent);
+  /* 38px 而非 32px：规范化后会出现 adj./adv./prep. 这类 4~5 字符词性 */
+  min-width: 38px;
+  padding-top: 2px;
+}
+.card .de-zh { flex: 1; }
+.card .de-section { margin-top: 14px; }
+.card .de-section-label {
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+.card .de-def {
+  display: flex;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+.card .de-pos-en { color: var(--muted); }
+.card .de-forms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.card .de-form {
+  font-size: 12.5px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 3px 9px;
+}
+.card .de-form i {
+  font-style: normal;
+  color: var(--muted);
+  margin-right: 5px;
+  font-size: 11px;
+}
+.card .de-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+.card .de-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 1px 9px;
+  opacity: 0.85;
+}
+.card .de-freq {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.card.card-marker {
+  background: #faf8f5;
+  border: 1px solid #ebd9c8;
+  box-shadow: 0 4px 18px rgba(180, 140, 100, 0.08);
+}
+@media (prefers-color-scheme: dark) {
+  .card.card-marker { background: #232220; border-color: #423e38; }
+}
+.card.card-marker .marker-tape {
+  width: 44px;
+  height: 10px;
+  background: rgba(251, 191, 36, 0.4);
+  border-radius: 2px;
+  margin-bottom: 14px;
+}
+.card.card-marker .front-content { font-size: 19px; font-weight: 700; }
+.card.card-marker hr.paper-line { border: none; border-top: 1.5px dashed #ebd9c8; margin: 18px 0; }
+@media (prefers-color-scheme: dark) {
+  .card.card-marker hr.paper-line { border-top-color: #423e38; }
+}
+.card.card-marker .back-content { font-size: 17px; }
