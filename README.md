@@ -1,131 +1,141 @@
-# Anki 卡片模板集 · Anki Card Templates
+# Anki Card Templates
 
-11 套原创 Anki 卡片模板，**双击导入即用**，含 4 种互动题型（选择 / 填空输入 / 排序 / 配对）。
-每套都有 `.apkg` 成品包与可粘贴的模板源码，不依赖任何插件。
+Eleven original Anki card templates — **import and go**. Four of them are interactive card types
+(multiple choice, type-in, ordering, matching) with their runtime inlined into the cards, so
+**no add-on is required**.
 
-> 由 [Anki 小工坊](https://www.lanche.website/templates)（AI 自动制卡工具）设计并开源。
-> 模板展厅可以免登录直接翻看每套模板的真实效果：<https://www.lanche.website/templates>
+Every template ships twice: as a ready-to-import `.apkg` in [`decks/`](decks/), and as raw
+front/back/CSS source in [`templates/`](templates/) for people who want to edit the design.
 
----
-
-## 快速开始
-
-### 方式一：导入成品包（推荐）
-
-从 [`decks/`](decks/) 里挑一套，下载 `.apkg` 后：
-
-- **电脑**：Anki →「文件 → 导入」→ 选中文件
-- **安卓**：在文件管理器里点开 `.apkg` → 选择 AnkiDroid
-- **iPhone / iPad**：在「文件」里分享 → AnkiMobile
-
-导入后自带示例卡片，可以直接看到这套模板长什么样。
-
-### 方式二：手动安装模板（想自己改样式）
-
-1. Anki →「工具 → 管理笔记类型 → 添加」，新建一个笔记类型
-2. 按 `templates/<id>/README.txt` 里列出的字段添加字段
-3. 把 `front.html` / `back.html` 分别粘进「正面模板」「背面模板」
-4. 把 `style.css` 粘进「样式」
+> Designed and open-sourced by [Anki 小工坊](https://www.lanche.website/templates) — an AI card
+> generator for Anki. You can browse every template live, without an account, at
+> <https://www.lanche.website/templates>.
 
 ---
 
-## 模板清单
+## Preview
 
-| 模板 | 说明 | 成品包 | 授权 |
-|---|---|---|---|
-| 现代简约 Modern QA | 一问一答，正文层级清晰，通用性最好 | [decks/modern_qa.apkg](decks/modern_qa.apkg) | CC BY 4.0 |
-| 学术雅致 Elegant Vocab | 带音标、词性、词根与例句的词汇卡 | [decks/elegant_vocab.apkg](decks/elegant_vocab.apkg) | CC BY 4.0 |
-| 荧光高亮 Cloze Highlight | 挖空后以荧光色标出，适合背句子与法条 | [decks/cloze_highlight.apkg](decks/cloze_highlight.apkg) | CC BY 4.0 |
-| 极简代码 Code Craft | 等宽字体与代码块样式，适合编程类记忆 | [decks/code_craft.apkg](decks/code_craft.apkg) | CC BY 4.0 |
-| 医考折叠 Med Foldout | 答案分层折叠，先看大类再展开细节 | [decks/med_foldout.apkg](decks/med_foldout.apkg) | CC BY 4.0 |
-| 康奈尔双栏 Cornell Divided | 左线索右笔记的双栏结构 | [decks/cornell_divided.apkg](decks/cornell_divided.apkg) | CC BY 4.0 |
-| 纸质荧光 Marker Highlight | 模拟纸质荧光笔的重点标注观感 | [decks/marker_highlight.apkg](decks/marker_highlight.apkg) | CC BY 4.0 |
-| 互动 · 选择题 Choice | 在卡片里直接作答并即时判分 | [decks/interactive_choice.apkg](decks/interactive_choice.apkg) | CC BY 4.0 |
-| 互动 · 填空题 Type-in | 打字输入答案，自动比对 | [decks/interactive_typein.apkg](decks/interactive_typein.apkg) | CC BY 4.0 |
-| 互动 · 排序题 Order | 拖拽排出正确顺序 | [decks/interactive_order.apkg](decks/interactive_order.apkg) | CC BY 4.0 |
-| 互动 · 配对题 Match | 左右两列配对 | [decks/interactive_match.apkg](decks/interactive_match.apkg) | CC BY 4.0 |
+Each image shows the real front and back of one card, rendered by **Anki's own renderer**
+(not a mockup). The sample card text is in Chinese; the templates themselves are language-agnostic.
 
-完整字段与授权信息见 [`decks/MANIFEST.json`](decks/MANIFEST.json)。
+| | |
+|---|---|
+| **Modern QA** · 现代简约<br>A clean question/answer layout with clear visual hierarchy.<br><img src="previews/modern_qa.png" alt="Modern QA template"> | **Elegant Vocab** · 学术雅致<br>Vocabulary cards with phonetics, part of speech, root and example.<br><img src="previews/elegant_vocab.png" alt="Elegant Vocab template"> |
+| **Cloze Highlight** · 荧光高亮<br>Cloze deletions highlighted in marker colour. Good for sentences and statutes.<br><img src="previews/cloze_highlight.png" alt="Cloze Highlight template"> | **Code Craft** · 极简代码<br>Monospaced styling and code blocks for programming material.<br><img src="previews/code_craft.png" alt="Code Craft template"> |
+| **Med Foldout** · 医考折叠<br>Answer revealed in layers — category first, details on demand.<br><img src="previews/med_foldout.png" alt="Med Foldout template"> | **Cornell Divided** · 康奈尔双栏<br>Two-column Cornell notes: cues on the left, notes on the right.<br><img src="previews/cornell_divided.png" alt="Cornell Divided template"> |
+| **Marker Highlight** · 纸质荧光<br>Looks like a highlighter drawn across printed paper.<br><img src="previews/marker_highlight.png" alt="Marker Highlight template"> | **Interactive · Multiple Choice**<br>Answer inside the card and get instant feedback.<br><img src="previews/interactive_choice.png" alt="Interactive multiple choice template"> |
+| **Interactive · Type-in**<br>Type the answer; it is compared automatically.<br><img src="previews/interactive_typein.png" alt="Interactive type-in template"> | **Interactive · Ordering**<br>Drag the items into the correct order.<br><img src="previews/interactive_order.png" alt="Interactive ordering template"> |
+| **Interactive · Matching**<br>Match the left column to the right column.<br><img src="previews/interactive_match.png" alt="Interactive matching template"> | |
+
+All eleven are licensed CC BY 4.0 — see [License & attribution](#license--attribution).
 
 ---
 
-## 一键安装插件（可选）
+## Quick start
 
-不想手动建笔记类型的话，用配套插件一次装完 11 套：
+### Option 1 — Import a ready-made deck (recommended)
 
-```
-工具 → Anki 小工坊 → 安装卡片模板…
-```
+Pick one from [`decks/`](decks/), download the `.apkg`, then:
 
-插件源码在 [`addon/`](addon/)。**只新增、不覆盖**（已有同名笔记类型会跳过），
-不联网、不需要账号，装完就是普通笔记类型，卸载插件后模板照常存在。
-已在 Anki 26.9.2 的临时收藏夹里跑通 95 项断言（字段 / 模板 / CSS / cloze 类型 / 幂等 / 建卡）。
+- **Desktop**: Anki → `File → Import` → select the file
+- **Android**: tap the `.apkg` in your file manager → open with AnkiDroid
+- **iPhone / iPad**: share the file from the Files app → AnkiMobile
+
+Each deck ships with sample cards, so you can see what the template looks like immediately.
+
+### Option 2 — Install the template manually
+
+1. Anki → `Tools → Manage Note Types → Add` to create a note type
+2. Add the fields listed in `templates/<id>/README.txt`
+3. Paste `front.html` and `back.html` into the Front/Back Template boxes
+4. Paste `style.css` into the Styling box
+
+### Option 3 — One-click installer add-on
+
+See [`addon/`](addon/). It installs all eleven templates at once and **never overwrites** an
+existing note type: if a note type with the same name already exists, it is skipped.
+It works offline, needs no account, and reports nothing anywhere.
 
 ---
 
-## 互动题型怎么用
+## Interactive card types
 
-四种互动模板共用一套运行时（已内联进卡片，**不需要装插件**）。出题时按下面的约定写字段：
+The four interactive templates share one inlined runtime — no add-on, no network calls.
+Author them using these field conventions:
 
-| 题型 | 字段 | 书写约定 |
+| Type | Field | Convention |
 |---|---|---|
-| 选择题 | `Options` | 每行一个选项，**正确项行首加 `*`** |
-| 填空题 | `Front` | 把要输入的部分写成 `[[答案]]` |
-| 排序题 | `Items` | 每行一项，**按正确顺序**书写（卡片会打乱） |
-| 配对题 | `Pairs` | 每行一组，左右用 ` :: ` 分隔 |
-
-其中只有选择题是「点选即判分」，其余三种都以「先作答 → 再翻面核对」的方式工作，
-这样复习时仍然是主动回忆，而不是识别。
+| Multiple choice | `Options` | One option per line; prefix the correct one with `*` |
+| Type-in | `Front` | Write the expected answer as `[[answer]]` |
+| Ordering | `Items` | One item per line, written in the **correct** order (the card shuffles them) |
+| Matching | `Pairs` | One pair per line, left and right separated by ` :: ` |
 
 ---
 
-## 设计原则
+## Design principles
 
-这些模板不是单纯的皮肤，它们对「卡片应该多小」有明确立场：
+These are not just skins. They take a position on how small a card should be:
 
-- **一张卡只考一个点。** 答错时你能立刻知道错在哪一处。
-- **答案要短。** 超过三行，复习就变成阅读理解。
-- **不给多余提示。** 正面提示越多，复习越接近「认出来」而不是「想起来」。
-- **样式跨端一致。** 所有样式内联在卡片里，手机端不会因为缺插件而显示异常。
-
----
-
-## 授权与署名
-
-本仓库的模板设计与源码由 **LC Learning（Anki 小工坊）** 创作，以
-**[Creative Commons Attribution 4.0 International（CC BY 4.0）](LICENSE)** 发布。
-
-你可以自由使用、修改、再分发（包括商用），**唯一的要求是署名**：
-
-> 模板设计：LC Learning · Anki 小工坊 — <https://www.lanche.website>
-
-导出的卡片页脚已内置这行署名，属于授权要求的一部分，**请勿移除**。
-详见 [NOTICE.md](NOTICE.md)。
-
-### 第三方作品
-
-本仓库**不包含** [Prettify](https://github.com/pranavdeshai/anki-prettify)（作者
-[@pranavdeshai](https://github.com/pranavdeshai)，MIT 许可）。本站也支持 Prettify 系列模板，
-但那是第三方创作，仅在站内提供并按 MIT 保留其署名。
+- **One card, one point.** When you miss it, you should know exactly which part you missed.
+- **Short answers.** Past roughly three lines, reviewing stops being recall and becomes reading.
+- **No unnecessary prompts.** The more hints on the front, the closer you get to recognition
+  instead of recall.
+- **Consistent across devices.** All styles are inlined into the cards, so the mobile view cannot
+  break because of a missing add-on.
 
 ---
 
-## 关于 Anki
+## License & attribution
 
-本项目与 Anki 官方（Ankitects）无隶属关系。Anki 是 Ankitects 的商标。
-本仓库提供的模板是**独立的笔记类型定义**，导入后即是普通的本地卡片，可脱离本站长期使用。
+The template designs and source code in this repository were created by **LC Learning
+(Anki 小工坊)** and are released under the
+**[Creative Commons Attribution 4.0 International licence (CC BY 4.0)](LICENSE)**.
+
+You may use, modify and redistribute them, including commercially.
+**The one condition is attribution:**
+
+> Template design: LC Learning · Anki 小工坊 — <https://www.lanche.website>
+
+Every exported card carries this line in its footer. It is part of the licence, not decoration:
+cards travel far from their source, and that footer is the only thing that travels with them.
+**Please keep it.**
+
+### Third-party work
+
+This repository does **not** include [Prettify](https://github.com/pranavdeshai/anki-prettify)
+by [@pranavdeshai](https://github.com/pranavdeshai) (MIT). The Anki 小工坊 site also offers the
+Prettify templates, but they are third-party work and are not redistributed here.
+See [NOTICE.md](NOTICE.md).
 
 ---
 
-## English summary
+## Rebuilding the assets
 
-Eleven original Anki card templates (plus four interactive card types: multiple choice,
-type-in, ordering, matching), ready to import. Each ships as an `.apkg` in [`decks/`](decks/)
-and as raw front/back/CSS source in [`templates/`](templates/).
+```bash
+# Regenerate the .apkg files and the template source from the template definitions
+python3 scripts/build_share_decks.py          # run from the template source project
 
-No add-ons required — all styles and interactive runtimes are inlined into the cards.
+# Regenerate the preview images (needs Anki installed + a Python with Playwright)
+python3 tools/anki_render_cards.py            # renders with Anki's own renderer
+PW_PYTHON=... python3 tools/html_to_png.py    # see the file header for env vars
+```
 
-Licensed **CC BY 4.0** by LC Learning (Anki 小工坊). Attribution is required:
-please credit "LC Learning · Anki 小工坊" and link to <https://www.lanche.website>.
+`previews/` is generated from the actual `.apkg` files, so what you see is what you import.
 
-Built with the AI card generator at <https://www.lanche.website/AI-Anki>.
+---
+
+## 中文说明
+
+本仓库提供 **11 套原创 Anki 卡片模板**，含 4 种互动题型（选择 / 填空输入 / 排序 / 配对）。
+互动题型的运行时已内联进卡片，**不需要安装任何插件**。
+
+- 想直接用：从 [`decks/`](decks/) 下载 `.apkg`，双击导入 Anki 即可
+- 想改样式：[`templates/<id>/`](templates/) 里有正/背面模板与 CSS 源码
+- 想一次装完：[`addon/`](addon/) 是配套插件（只新增、不覆盖，不联网、不需要账号）
+
+上面的预览图是用 **Anki 自己的渲染器**跑出来的真实卡片效果，不是示意图。
+
+授权：**CC BY 4.0**，可自由使用与修改（含商用），**条件只有一个——署名**并链接回
+<https://www.lanche.website>。每张导出的卡片页脚已内置这行署名，请保留。
+
+与 Anki 官方（Ankitects）无隶属关系；Anki 是 Ankitects 的商标。
